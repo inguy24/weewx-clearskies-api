@@ -141,23 +141,32 @@ class RateLimitSettings:
 
 
 class DatabaseSettings:
-    """[database] section settings — STUB for Task 2.
+    """[database] section settings (ADR-012, ADR-027).
 
-    DB connection is intentionally not wired here. Phase 2 Task 2 will add
-    SQLAlchemy engine construction, read-only user enforcement, and the
-    startup write-probe (ADR-012). These stubs exist so other modules
-    can import DatabaseSettings without breaking.
+    Non-secret fields come from the INI config file.
+    Credentials (user/password) are read from env vars at engine-build time
+    by db/engine.py — they never touch this object:
+      WEEWX_CLEARSKIES_DB_USER
+      WEEWX_CLEARSKIES_DB_PASSWORD
+
+    Pool settings are configurable per ADR-012 (defaults: pool_size=5,
+    max_overflow=10).  SQLite ignores pool settings (NullPool is used).
     """
 
     #: Database type: "sqlite" or "mysql".
     kind: str
     #: For sqlite: path to the .sdb file.
     path: str
-    #: For mysql: host (stub, not connected yet).
+    #: For mysql: host — IP or hostname.  IPv4/IPv6 both accepted (coding.md §1).
     host: str
+    #: For mysql: port.
     port: int
+    #: For mysql: database name.
     name: str
-    # Credentials come from env vars CLEARSKIES_DB_USER / CLEARSKIES_DB_PASSWORD.
+    #: Connection pool size (mysql only, ignored for sqlite). ADR-012 default: 5.
+    pool_size: int
+    #: Max pool overflow (mysql only, ignored for sqlite). ADR-012 default: 10.
+    max_overflow: int
 
     def __init__(self, section: dict[str, Any]) -> None:
         self.kind = str(section.get("kind", "sqlite"))
@@ -165,6 +174,32 @@ class DatabaseSettings:
         self.host = str(section.get("host", "127.0.0.1"))
         self.port = int(section.get("port", 3306))
         self.name = str(section.get("name", "weewx"))
+        self.pool_size = int(section.get("pool_size", 5))
+        self.max_overflow = int(section.get("max_overflow", 10))
+
+    def validate(self) -> None:
+        """Raise ValueError on bad values. Called at startup."""
+        valid_kinds = {"sqlite", "mysql"}
+        if self.kind.lower() not in valid_kinds:
+            raise ValueError(
+                f"[database] kind {self.kind!r} not in {valid_kinds}. "
+                "Supported values: 'sqlite', 'mysql'."
+            )
+        if self.kind.lower() == "mysql":
+            if not (1 <= self.port <= 65535):
+                raise ValueError(
+                    f"[database] port {self.port!r} out of range 1–65535"
+                )
+            if not self.name:
+                raise ValueError("[database] name must not be empty for mysql kind")
+            if not self.host:
+                raise ValueError("[database] host must not be empty for mysql kind")
+        if self.kind.lower() == "sqlite" and not self.path:
+            raise ValueError("[database] path must not be empty for sqlite kind")
+        if self.pool_size < 1:
+            raise ValueError("[database] pool_size must be >= 1")
+        if self.max_overflow < 0:
+            raise ValueError("[database] max_overflow must be >= 0")
 
 
 class Settings:
@@ -195,6 +230,7 @@ class Settings:
         self.api.validate()
         self.health.validate()
         self.ratelimit.validate()
+        self.database.validate()
 
 
 # ---------------------------------------------------------------------------

@@ -17,6 +17,16 @@ IPv4/IPv6 dual-stack listener (coding.md §1, ADR-037):
 Startup warning for cross-host without proxy secret (ADR-008):
     When bind_host is non-loopback and WEEWX_CLEARSKIES_PROXY_SECRET is unset,
     emit a loud WARNING at startup (and schedule a repeat every 60 s).
+
+Startup sequence (ADR-012):
+    1. load settings          — parse api.conf, validate all sections.
+    2. setup logging          — JSON formatter active before any DB work.
+    3. build engine           — SQLAlchemy engine from [database] settings.
+    4. run write-probe        — exits 1 if the DB user has write privileges.
+    5. run schema reflection  — MetaData.reflect() on the archive table;
+                                logs warnings on unmapped columns; does NOT exit.
+    6. register DB probe      — health subsystem wired with SELECT 1 probe.
+    7. start uvicorn          — public API + health app.
 """
 
 from __future__ import annotations
@@ -33,6 +43,11 @@ import uvicorn
 
 from weewx_clearskies_api.app import create_app
 from weewx_clearskies_api.config.settings import Settings, load_settings
+from weewx_clearskies_api.db.engine import build_engine
+from weewx_clearskies_api.db.health import wire_db_health_probe
+from weewx_clearskies_api.db.probe import run_write_probe
+from weewx_clearskies_api.db.reflection import SchemaReflector
+from weewx_clearskies_api.db.session import wire_engine
 from weewx_clearskies_api.health import create_health_app
 from weewx_clearskies_api.logging.setup import setup_logging
 
@@ -155,13 +170,53 @@ def _run_server(settings: Settings) -> None:
 
 
 def main() -> None:
-    """Main entry point."""
-    # Bootstrap logging before anything else so config-load errors are JSON.
+    """Main entry point.
+
+    Startup sequence (ADR-012):
+      1. Bootstrap logging (INFO) so config-load errors are JSON.
+      2. Load + validate settings from api.conf.
+      3. Re-configure logging at the operator's log level.
+      4. Build the SQLAlchemy engine.
+      5. Run the write-probe — exits 1 if DB user has write privileges.
+      6. Run schema reflection — logs unmapped columns; does NOT exit.
+      7. Register DB health probe.
+      8. Start uvicorn.
+    """
+    # Step 1: Bootstrap logging before anything else so config errors appear
+    # as JSON (ADR-029).
     setup_logging("INFO")
 
+    # Step 2: Load and validate settings.
     settings = load_settings()
+
+    # Step 3: Reconfigure logging at the operator's level.
     setup_logging(settings.logging.level)
 
+    # Step 4: Build the SQLAlchemy engine.
+    engine = build_engine(settings.database)
+    wire_engine(engine)
+
+    # Step 5: Write-probe — exits 1 if the connected user can write.
+    # This must run BEFORE uvicorn starts and BEFORE schema reflection,
+    # so the critical log appears before any other startup output.
+    run_write_probe(engine)
+
+    # Step 6: Schema reflection — build column registry.
+    # Logs warnings for unmapped columns but does NOT abort startup.
+    reflector = SchemaReflector(engine)
+    try:
+        reflector.reflect()
+    except RuntimeError as exc:
+        # Reflection failure is non-fatal at startup (the archive table might
+        # not exist in a fresh install before weewx has run).  Log a warning
+        # and continue.  Endpoints that need the registry will fail gracefully
+        # until the table exists.
+        logger.warning("Schema reflection failed at startup: %s", exc)
+
+    # Step 7: Register DB readiness probe.
+    wire_db_health_probe()
+
+    # Step 8: Start servers.
     _run_server(settings)
 
 
