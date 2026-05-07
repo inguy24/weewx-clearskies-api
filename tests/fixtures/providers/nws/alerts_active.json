@@ -1,0 +1,72 @@
+{
+  "type": "FeatureCollection",
+  "features": [
+    {
+      "id": "urn:oid:2.49.0.1.840.0.8e9f3b4a1c2d5e6f7890abcd12345678.001.1",
+      "type": "Feature",
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [
+          [
+            [-122.5, 47.4],
+            [-122.0, 47.4],
+            [-122.0, 47.8],
+            [-122.5, 47.8],
+            [-122.5, 47.4]
+          ]
+        ]
+      },
+      "properties": {
+        "id": "urn:oid:2.49.0.1.840.0.8e9f3b4a1c2d5e6f7890abcd12345678.001.1",
+        "areaDesc": "King, WA; Snohomish, WA",
+        "sent": "2026-04-30T16:00:00-07:00",
+        "effective": "2026-04-30T16:00:00-07:00",
+        "onset": "2026-04-30T18:00:00-07:00",
+        "expires": "2026-04-30T22:00:00-07:00",
+        "ends": "2026-04-30T22:00:00-07:00",
+        "status": "Actual",
+        "messageType": "Alert",
+        "category": "Met",
+        "severity": "Moderate",
+        "certainty": "Likely",
+        "urgency": "Expected",
+        "event": "Wind Advisory",
+        "sender": "w-nws.webmaster@noaa.gov",
+        "senderName": "NWS Seattle WA",
+        "headline": "Wind Advisory issued April 30 at 4:00PM PDT until April 30 at 10:00PM PDT by NWS Seattle WA",
+        "description": "* WHAT...Southerly winds 20 to 30 mph with gusts up to 45 mph.\n\n* WHERE...King and Snohomish Counties.\n\n* WHEN...Until 10 PM PDT this evening.\n\n* IMPACTS...Gusty winds will blow around unsecured objects. Tree limbs could be blown down and a few power outages may result.",
+        "instruction": "Use extra caution when driving, especially if operating a high profile vehicle. Secure outdoor objects.",
+        "response": "Execute"
+      }
+    },
+    {
+      "id": "urn:oid:2.49.0.1.840.0.8e9f3b4a1c2d5e6f7890abcd12345678.002.1",
+      "type": "Feature",
+      "geometry": null,
+      "properties": {
+        "id": "urn:oid:2.49.0.1.840.0.8e9f3b4a1c2d5e6f7890abcd12345678.002.1",
+        "areaDesc": "Puget Sound and Hood Canal",
+        "sent": "2026-04-30T15:00:00-07:00",
+        "effective": "2026-04-30T15:00:00-07:00",
+        "onset": "2026-04-30T18:00:00-07:00",
+        "expires": "2026-05-01T04:00:00-07:00",
+        "ends": "2026-05-01T04:00:00-07:00",
+        "status": "Actual",
+        "messageType": "Alert",
+        "category": "Met",
+        "severity": "Minor",
+        "certainty": "Likely",
+        "urgency": "Future",
+        "event": "Small Craft Advisory",
+        "sender": "w-nws.webmaster@noaa.gov",
+        "senderName": "NWS Seattle WA",
+        "headline": "Small Craft Advisory issued April 30 at 3:00PM PDT until May 1 at 4:00AM PDT by NWS Seattle WA",
+        "description": "* WHAT...South winds 15 to 25 kt with gusts up to 35 kt and seas 4 to 6 ft.\n\n* WHERE...Puget Sound and Hood Canal.\n\n* WHEN...From 6 PM this evening to 4 AM PDT Friday.",
+        "instruction": null,
+        "response": "Avoid"
+      }
+    }
+  ],
+  "title": "Current watches, warnings, and advisories for Washington State",
+  "updated": "2026-04-30T23:15:00+00:00"
+}

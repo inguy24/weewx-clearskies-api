@@ -24,6 +24,14 @@ dependencies = [
     "pymysql==1.1.3",
     # ADR-014: Skyfield for almanac ephemeris computation (pre-approved 2026-05-06).
     "skyfield>=1.48",
+    # ADR-038 / 3b-1: httpx for provider HTTP (sync mode; respx is its mock lib).
+    # Pre-approved 2026-05-07 per task brief §confirmed-call #1.
+    "httpx>=0.28.1",
+    # ADR-017 / 3b-1: redis-py for the Redis cache backend.
+    # Always installed so operators who set CLEARSKIES_CACHE_URL get a working
+    # backend without a separate install step (ADR-017 §Decision).
+    # Pre-approved 2026-05-07 per task brief §confirmed-call #4.
+    "redis>=5.0.0",
 ]
 
 [project.optional-dependencies]
@@ -32,9 +40,14 @@ dev = [
     "mypy==1.15.0",
     "pytest==8.3.5",
     "pytest-asyncio==0.26.0",
-    "httpx==0.28.1",
     # Integration tests: pytest-timeout guards against DB fixture hangs
     "pytest-timeout==2.3.1",
+    # 3b round 1: respx mocks outbound httpx calls (no live network in CI per ADR-038).
+    # fakeredis provides an in-process Redis fake for RedisCache unit tests (ADR-017).
+    # httpx is a runtime dep (>=0.28.1); respx needs it pinned exactly for compat.
+    "httpx==0.28.1",
+    "respx==0.22.0",
+    "fakeredis==2.26.2",
 ]
 
 [project.scripts]
@@ -110,4 +123,5 @@ asyncio_mode = "auto"
 log_cli = false
 markers = [
     "integration: marks integration tests that require the dev/test stack (MariaDB or seeded SQLite)",
+    "redis: marks integration tests that require the redis compose profile (use with -m 'integration and redis')",
 ]

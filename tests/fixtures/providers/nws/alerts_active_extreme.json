@@ -1,0 +1,72 @@
+{
+  "type": "FeatureCollection",
+  "features": [
+    {
+      "id": "urn:oid:2.49.0.1.840.0.extreme.tornado.001",
+      "type": "Feature",
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [
+          [
+            [-97.5, 35.2],
+            [-97.0, 35.2],
+            [-97.0, 35.6],
+            [-97.5, 35.6],
+            [-97.5, 35.2]
+          ]
+        ]
+      },
+      "properties": {
+        "id": "urn:oid:2.49.0.1.840.0.extreme.tornado.001",
+        "areaDesc": "Oklahoma County, OK",
+        "sent": "2026-05-07T18:00:00-05:00",
+        "effective": "2026-05-07T18:00:00-05:00",
+        "onset": "2026-05-07T18:15:00-05:00",
+        "expires": "2026-05-07T18:45:00-05:00",
+        "ends": "2026-05-07T18:45:00-05:00",
+        "status": "Actual",
+        "messageType": "Alert",
+        "category": "Met",
+        "severity": "Extreme",
+        "certainty": "Observed",
+        "urgency": "Immediate",
+        "event": "Tornado Warning",
+        "sender": "w-nws.webmaster@noaa.gov",
+        "senderName": "NWS Norman OK",
+        "headline": "Tornado Warning issued May 7 at 6:00PM CDT until May 7 at 6:45PM CDT by NWS Norman OK",
+        "description": "* WHAT...A confirmed tornado.\n\n* WHERE...Oklahoma County.\n\n* WHEN...Until 645 PM CDT.\n\n* IMPACTS...Life-threatening situation. Flying debris will be dangerous to those caught without shelter.",
+        "instruction": "TAKE COVER NOW! Move to a basement or an interior room on the lowest floor of a sturdy building. Avoid windows. If you are outdoors, in a mobile home, or in a vehicle, move to the closest substantial shelter and protect yourself from flying debris.",
+        "response": "Shelter"
+      }
+    },
+    {
+      "id": "urn:oid:2.49.0.1.840.0.extreme.severe.001",
+      "type": "Feature",
+      "geometry": null,
+      "properties": {
+        "id": "urn:oid:2.49.0.1.840.0.extreme.severe.001",
+        "areaDesc": "Lincoln County, OK; Pottawatomie County, OK",
+        "sent": "2026-05-07T17:30:00-05:00",
+        "effective": "2026-05-07T17:30:00-05:00",
+        "onset": "2026-05-07T17:30:00-05:00",
+        "expires": "2026-05-07T19:00:00-05:00",
+        "ends": "2026-05-07T19:00:00-05:00",
+        "status": "Actual",
+        "messageType": "Alert",
+        "category": "Met",
+        "severity": "Severe",
+        "certainty": "Likely",
+        "urgency": "Immediate",
+        "event": "Severe Thunderstorm Warning",
+        "sender": "w-nws.webmaster@noaa.gov",
+        "senderName": "NWS Norman OK",
+        "headline": "Severe Thunderstorm Warning issued May 7 at 5:30PM CDT until May 7 at 7:00PM CDT by NWS Norman OK",
+        "description": "* WHAT...Sixty mph wind gusts and quarter size hail.\n\n* WHERE...Lincoln and Pottawatomie Counties.\n\n* WHEN...Until 700 PM CDT.",
+        "instruction": "For your protection move to an interior room on the lowest floor of a building.",
+        "response": "Shelter"
+      }
+    }
+  ],
+  "title": "Current watches, warnings, and advisories for Oklahoma",
+  "updated": "2026-05-07T23:00:00+00:00"
+}

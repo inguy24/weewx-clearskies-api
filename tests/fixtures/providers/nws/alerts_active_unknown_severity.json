@@ -1,0 +1,34 @@
+{
+  "type": "FeatureCollection",
+  "features": [
+    {
+      "id": "urn:oid:2.49.0.1.840.0.unknown.severity.001",
+      "type": "Feature",
+      "geometry": null,
+      "properties": {
+        "id": "urn:oid:2.49.0.1.840.0.unknown.severity.001",
+        "areaDesc": "King, WA",
+        "sent": "2026-05-07T10:00:00-07:00",
+        "effective": "2026-05-07T10:00:00-07:00",
+        "onset": "2026-05-07T12:00:00-07:00",
+        "expires": "2026-05-07T20:00:00-07:00",
+        "ends": "2026-05-07T20:00:00-07:00",
+        "status": "Actual",
+        "messageType": "Alert",
+        "category": "Met",
+        "severity": "Critical",
+        "certainty": "Likely",
+        "urgency": "Expected",
+        "event": "Hypothetical Future Alert Type",
+        "sender": "w-nws.webmaster@noaa.gov",
+        "senderName": "NWS Seattle WA",
+        "headline": "Hypothetical Future Alert issued May 7 at 10:00AM PDT by NWS Seattle WA",
+        "description": "This is a hand-crafted fixture with an unknown CAP severity value ('Critical') that does not appear in the NWS CAP severity enumeration (Extreme/Severe/Moderate/Minor/Unknown). Used to test the unknown-severity-defaults-to-advisory path.",
+        "instruction": null,
+        "response": "Monitor"
+      }
+    }
+  ],
+  "title": "Current watches, warnings, and advisories",
+  "updated": "2026-05-07T17:00:00+00:00"
+}

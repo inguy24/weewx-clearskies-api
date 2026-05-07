@@ -1,0 +1,33 @@
+{
+  "type": "FeatureCollection",
+  "features": [
+    {
+      "id": "urn:oid:2.49.0.1.840.0.malformed.001",
+      "type": "Feature",
+      "geometry": null,
+      "properties": {
+        "id": "urn:oid:2.49.0.1.840.0.malformed.001",
+        "areaDesc": "King, WA",
+        "sent": "2026-05-07T10:00:00-07:00",
+        "effective": "2026-05-07T10:00:00-07:00",
+        "onset": "2026-05-07T12:00:00-07:00",
+        "expires": "2026-05-07T20:00:00-07:00",
+        "ends": null,
+        "status": "Actual",
+        "messageType": "Alert",
+        "category": "Met",
+        "severity": "Moderate",
+        "certainty": "Likely",
+        "urgency": "Expected",
+        "event": "Wind Advisory",
+        "sender": "w-nws.webmaster@noaa.gov",
+        "senderName": "NWS Seattle WA",
+        "description": "* WHAT...Southerly winds 20 to 30 mph with gusts up to 45 mph.",
+        "instruction": null,
+        "response": "Execute"
+      }
+    }
+  ],
+  "title": "Current watches, warnings, and advisories",
+  "updated": "2026-05-07T17:00:00+00:00"
+}
