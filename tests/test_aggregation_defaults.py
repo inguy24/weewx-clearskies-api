@@ -183,11 +183,10 @@ class TestDayAggregatorConstant:
         # but may not be included if the api-dev omits them — the test is lenient here.
         # The following fields do NOT have archive_day_* tables in a stock weewx install
         # and are intentionally excluded from DAY_AGGREGATOR:
-        explicitly_excluded: set[str] = {
-            # hail fields: wview_extended but uncommon; no archive_day_hail in stock schema.
-            # The dev included hail/hailRate/hailBatteryStatus in DAY_AGGREGATOR — so they
-            # ARE covered. This exclusion set is a safety valve for fields without day tables.
-        }
+        explicitly_excluded: set[str] = set()
+        # This exclusion set is a safety valve for fields without archive_day_* tables.
+        # Currently empty: all first-class fields either have aggregators in DAY_AGGREGATOR
+        # or the test expectation is that they should be added.
 
         missing = _FIRST_CLASS_FIELDS - set(DAY_AGGREGATOR.keys()) - explicitly_excluded
         assert not missing, (
