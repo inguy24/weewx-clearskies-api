@@ -83,8 +83,8 @@ _GROUP_MEMBERS: Final[dict[str, list[str]]] = {
     "group_direction": ["windDir", "windGustDir", "gustdir", "vecdir"],
     "group_pressure": ["barometer", "altimeter", "pressure"],
     "group_pressurerate": ["barometerRate", "altimeterRate", "pressureRate"],
-    "group_rain": ["rain", "ET", "hail", "snowDepth", "snowRate", "precipAmount"],
-    "group_rainrate": ["rainRate", "hailRate"],
+    "group_rain": ["rain", "ET", "hail", "snow", "snowDepth", "precipAmount"],
+    "group_rainrate": ["rainRate", "hailRate", "snowRate"],
     "group_radiation": ["radiation", "maxSolarRad"],
     "group_uv": ["UV", "uvIndexMax"],
     "group_percent": [
@@ -108,7 +108,7 @@ _GROUP_MEMBERS: Final[dict[str, list[str]]] = {
         "referenceVoltage", "supplyVoltage",
     ],
     "group_db": ["noise"],
-    "group_deltatime": ["rainDur", "daySunshineDur", "sunshineDurDoc"],
+    "group_deltatime": ["rainDur", "sunshineDur", "daySunshineDur", "sunshineDurDoc"],
     "group_degree_day": ["cooldeg", "heatdeg", "growdeg"],
     "group_concentration": [
         "pollutantPM25", "pollutantPM10",
