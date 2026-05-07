@@ -120,7 +120,7 @@ DAY_AGGREGATOR: dict[str, str] = {
     # Judgment calls flagged in closeout report for lead review.
     "cloudcover": "avg",          # percent — average
     "cooldeg": "sum",             # degree-days — accumulation
-    "daySunshineDur": "sum",      # cumulative sunshine — brief says sum
+    "daySunshineDur": "max",      # running cumulative since midnight; max = end-of-day total
     "gustdir": "avg",             # direction — avg (JUDGMENT: max could be argued)
     "heatdeg": "sum",             # degree-days — accumulation
     "lightning_distance": "max",  # peak distance to nearest strike
