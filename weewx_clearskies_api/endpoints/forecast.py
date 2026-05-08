@@ -16,6 +16,10 @@ Behavior decision tree per brief §per-endpoint spec:
   9. Aeris credentials unset → 502 ProviderProblem (KeyInvalid)
  10. Aeris returns 401 → 502 ProviderProblem (KeyInvalid)
  11. Aeris returns 429 → 503 ProviderProblem (QuotaExhausted) + Retry-After
+ 12. OWM appid unset → 502 ProviderProblem (KeyInvalid)
+ 13. OWM returns 401 (basic-tier key) → 200 ForecastResponse with hourly=[], daily=[]
+     (Q1 user decision 2026-05-08; graceful empty bundle, not an error)
+ 14. OWM returns 429 → 503 ProviderProblem (QuotaExhausted) + Retry-After
 
 Slice-after-cache pattern (ADR-017 §Cache key):
   Cache stores the FULL bundle (every hourly + daily point returned by provider).
@@ -46,6 +50,11 @@ Aeris credentials: wired via wire_aeris_credentials() (called from
   wire_forecast_settings()). Module-level _aeris_client_id and
   _aeris_client_secret are passed to aeris.fetch() from the dispatch branch.
   Missing credentials → KeyInvalid at fetch time (brief lead-call 12).
+
+OWM appid: wired via wire_openweathermap_credentials() (called from
+  wire_forecast_settings()). Module-level _openweathermap_appid is passed to
+  openweathermap.fetch() from the dispatch branch.
+  Missing appid → KeyInvalid at fetch time (same loud-failure posture as Aeris).
 """
 
 from __future__ import annotations
@@ -114,12 +123,35 @@ def wire_aeris_credentials(client_id: str | None, client_secret: str | None) -> 
     _aeris_client_secret = client_secret
 
 
+# ---------------------------------------------------------------------------
+# Module-level OWM appid wiring (populated at startup)
+# Mirrors wire_aeris_credentials pattern. Single credential (appid only).
+# ---------------------------------------------------------------------------
+
+_openweathermap_appid: str | None = None
+
+
+def wire_openweathermap_credentials(appid: str | None) -> None:
+    """Store OWM appid read from env var at startup.
+
+    Per ADR-027 §3, secrets come from env vars (loaded by systemd
+    EnvironmentFile / docker-compose env_file).  Long-form provider-scoped
+    env var name WEEWX_CLEARSKIES_OPENWEATHERMAP_APPID per brief Q2 user
+    decision 2026-05-08.  Tests that don't care about OWM leave this as None;
+    if [forecast] provider = openweathermap and appid is unset, the module
+    raises KeyInvalid at fetch time (loud failure beats silent disable).
+    """
+    global _openweathermap_appid  # noqa: PLW0603
+    _openweathermap_appid = appid
+
+
 def wire_forecast_settings(settings: object) -> None:
     """Wire forecast-related settings from the Settings object.
 
-    Convenience wrapper for __main__.py — extracts nws_user_agent_contact
-    and Aeris credentials from settings.forecast and calls the per-provider
-    wire_*() helpers. Mirrors wire_alerts_settings() in endpoints/alerts.py.
+    Convenience wrapper for __main__.py — extracts nws_user_agent_contact,
+    Aeris credentials, and OWM appid from settings.forecast and calls the
+    per-provider wire_*() helpers. Mirrors wire_alerts_settings() in
+    endpoints/alerts.py.
     """
     forecast_settings = getattr(settings, "forecast", None)
     contact = getattr(forecast_settings, "nws_user_agent_contact", None)
@@ -128,6 +160,9 @@ def wire_forecast_settings(settings: object) -> None:
     aeris_id = getattr(forecast_settings, "aeris_client_id", None)
     aeris_secret = getattr(forecast_settings, "aeris_client_secret", None)
     wire_aeris_credentials(aeris_id, aeris_secret)
+
+    owm_appid = getattr(forecast_settings, "openweathermap_appid", None)
+    wire_openweathermap_credentials(owm_appid)
 
 
 # ---------------------------------------------------------------------------
@@ -256,6 +291,20 @@ def get_forecast(
             target_unit=target_unit,
             client_id=_aeris_client_id,
             client_secret=_aeris_client_secret,
+        )
+    elif provider_id == "openweathermap":
+        from weewx_clearskies_api.providers.forecast import openweathermap  # noqa: PLC0415
+
+        # fetch() returns the FULL canonical bundle (one upstream call:
+        # /data/3.0/onecall with exclude=current,minutely,alerts). Cache stores
+        # the full bundle; slice is applied below after cache lookup.
+        # _openweathermap_appid set at startup via wire_forecast_settings().
+        # Basic-tier 401 → graceful empty bundle per Q1 user decision 2026-05-08.
+        bundle = openweathermap.fetch(
+            lat=station.latitude,
+            lon=station.longitude,
+            target_unit=target_unit,
+            appid=_openweathermap_appid,
         )
     else:
         # Unknown provider should have been caught at startup by _wire_providers_from_config.
