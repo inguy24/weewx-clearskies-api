@@ -16,7 +16,7 @@ Covers per the task-3b-4 brief §Test author parallel scope:
   - _AerisDayNightPeriod: real fixture loads cleanly; extra fields ignored.
   - _AerisEnvelope: success=true + success=false + warn shape.
 
-  _detect_discussion (Q2 runtime detection):
+  _extract_aeris_discussion (Q2 runtime detection):
   - Non-empty response-level summary → ForecastDiscussion with headline,
     body, source="aeris", issuedAt=<UTC-converted dateTimeISO>.
   - Non-empty period-level summary → same shape (second detection point).
@@ -73,7 +73,6 @@ import json
 import logging
 from pathlib import Path
 from typing import Any
-from unittest.mock import patch
 
 import httpx
 import pytest
@@ -453,12 +452,12 @@ class TestWireShapePydanticModels:
 
 
 # ===========================================================================
-# 4. _detect_discussion — Q2 runtime detection
+# 4. _extract_aeris_discussion — Q2 runtime detection
 # ===========================================================================
 
 
 class TestDetectDiscussion:
-    """_detect_discussion covers both detection points for the paid-tier summary field."""
+    """_extract_aeris_discussion covers both detection points for the paid-tier summary field."""
 
     def _make_first_period_raw(self, summary: str | None = None) -> dict[str, Any]:
         """Build a minimal first-period raw dict for testing."""
@@ -473,14 +472,14 @@ class TestDetectDiscussion:
     def test_response_level_summary_returns_forecast_discussion(self) -> None:
         """Non-empty response[0].summary → ForecastDiscussion with body=that string."""
         from weewx_clearskies_api.providers.forecast.aeris import (  # noqa: PLC0415
-            _detect_discussion,
+            _extract_aeris_discussion,
             ForecastDiscussion,
         )
         daynight_raw = {
             "summary": "Partly cloudy skies expected through the period.",
             "periods": [self._make_first_period_raw()],
         }
-        result = _detect_discussion(
+        result = _extract_aeris_discussion(
             daynight_raw=daynight_raw,
             first_period_raw=self._make_first_period_raw(),
             provider_id="aeris",
@@ -496,7 +495,7 @@ class TestDetectDiscussion:
 
     def test_period_level_summary_returns_forecast_discussion(self) -> None:
         """Non-empty periods[0].summary → ForecastDiscussion (second detection point)."""
-        from weewx_clearskies_api.providers.forecast.aeris import _detect_discussion  # noqa: PLC0415
+        from weewx_clearskies_api.providers.forecast.aeris import _extract_aeris_discussion  # noqa: PLC0415
         first_period = self._make_first_period_raw(
             summary="Partly cloudy with a high near 65F."
         )
@@ -504,7 +503,7 @@ class TestDetectDiscussion:
             "summary": None,  # No response-level summary
             "periods": [first_period],
         }
-        result = _detect_discussion(
+        result = _extract_aeris_discussion(
             daynight_raw=daynight_raw,
             first_period_raw=first_period,
             provider_id="aeris",
@@ -516,13 +515,13 @@ class TestDetectDiscussion:
 
     def test_response_level_takes_precedence_over_period_level(self) -> None:
         """Response-level summary is used when both are present (first detection wins)."""
-        from weewx_clearskies_api.providers.forecast.aeris import _detect_discussion  # noqa: PLC0415
+        from weewx_clearskies_api.providers.forecast.aeris import _extract_aeris_discussion  # noqa: PLC0415
         first_period = self._make_first_period_raw(summary="Period-level summary.")
         daynight_raw = {
             "summary": "Response-level summary (preferred).",
             "periods": [first_period],
         }
-        result = _detect_discussion(
+        result = _extract_aeris_discussion(
             daynight_raw=daynight_raw,
             first_period_raw=first_period,
             provider_id="aeris",
@@ -533,9 +532,9 @@ class TestDetectDiscussion:
 
     def test_neither_summary_field_returns_none(self) -> None:
         """When neither response nor period has summary → None (free-tier default)."""
-        from weewx_clearskies_api.providers.forecast.aeris import _detect_discussion  # noqa: PLC0415
+        from weewx_clearskies_api.providers.forecast.aeris import _extract_aeris_discussion  # noqa: PLC0415
         daynight_raw: dict[str, Any] = {"summary": None, "periods": [{}]}
-        result = _detect_discussion(
+        result = _extract_aeris_discussion(
             daynight_raw=daynight_raw,
             first_period_raw=self._make_first_period_raw(),
             provider_id="aeris",
@@ -545,9 +544,9 @@ class TestDetectDiscussion:
 
     def test_empty_string_summary_returns_none(self) -> None:
         """Empty string summary is treated as absent → returns None."""
-        from weewx_clearskies_api.providers.forecast.aeris import _detect_discussion  # noqa: PLC0415
+        from weewx_clearskies_api.providers.forecast.aeris import _extract_aeris_discussion  # noqa: PLC0415
         daynight_raw = {"summary": "", "periods": []}
-        result = _detect_discussion(
+        result = _extract_aeris_discussion(
             daynight_raw=daynight_raw,
             first_period_raw=self._make_first_period_raw(summary=""),
             provider_id="aeris",
@@ -557,9 +556,9 @@ class TestDetectDiscussion:
 
     def test_whitespace_only_summary_returns_none(self) -> None:
         """Whitespace-only summary is treated as absent → returns None."""
-        from weewx_clearskies_api.providers.forecast.aeris import _detect_discussion  # noqa: PLC0415
+        from weewx_clearskies_api.providers.forecast.aeris import _extract_aeris_discussion  # noqa: PLC0415
         daynight_raw = {"summary": "   \t\n  ", "periods": []}
-        result = _detect_discussion(
+        result = _extract_aeris_discussion(
             daynight_raw=daynight_raw,
             first_period_raw=self._make_first_period_raw(summary="\n  "),
             provider_id="aeris",
@@ -569,9 +568,9 @@ class TestDetectDiscussion:
 
     def test_none_first_period_raw_returns_none_when_no_response_summary(self) -> None:
         """first_period_raw=None and no response-level summary → None."""
-        from weewx_clearskies_api.providers.forecast.aeris import _detect_discussion  # noqa: PLC0415
+        from weewx_clearskies_api.providers.forecast.aeris import _extract_aeris_discussion  # noqa: PLC0415
         daynight_raw: dict[str, Any] = {"summary": None}
-        result = _detect_discussion(
+        result = _extract_aeris_discussion(
             daynight_raw=daynight_raw,
             first_period_raw=None,
             provider_id="aeris",
@@ -579,13 +578,13 @@ class TestDetectDiscussion:
         )
         assert result is None
 
-    def test_detect_discussion_with_real_free_tier_fixture_returns_none(self) -> None:
+    def test_extract_aeris_discussion_with_real_free_tier_fixture_returns_none(self) -> None:
         """Real free-tier forecasts_daynight.json → discussion=None (no summary field)."""
-        from weewx_clearskies_api.providers.forecast.aeris import _detect_discussion  # noqa: PLC0415
+        from weewx_clearskies_api.providers.forecast.aeris import _extract_aeris_discussion  # noqa: PLC0415
         fixture = _load_fixture("forecasts_daynight.json")
         raw_first = fixture["response"][0]
         first_period_raw = raw_first.get("periods", [None])[0]
-        result = _detect_discussion(
+        result = _extract_aeris_discussion(
             daynight_raw=raw_first,
             first_period_raw=first_period_raw,
             provider_id="aeris",
@@ -593,13 +592,13 @@ class TestDetectDiscussion:
         )
         assert result is None
 
-    def test_detect_discussion_with_synthetic_summary_fixture_returns_discussion(self) -> None:
+    def test_extract_aeris_discussion_with_synthetic_summary_fixture_returns_discussion(self) -> None:
         """Synthetic forecasts_daynight_with_summary.json → discussion populated."""
-        from weewx_clearskies_api.providers.forecast.aeris import _detect_discussion  # noqa: PLC0415
+        from weewx_clearskies_api.providers.forecast.aeris import _extract_aeris_discussion  # noqa: PLC0415
         fixture = _load_fixture("forecasts_daynight_with_summary.json")
         raw_first = fixture["response"][0]
         first_period_raw = raw_first.get("periods", [None])[0]
-        result = _detect_discussion(
+        result = _extract_aeris_discussion(
             daynight_raw=raw_first,
             first_period_raw=first_period_raw,
             provider_id="aeris",

@@ -91,8 +91,6 @@ from weewx_clearskies_api.providers._common.datetime_utils import to_utc_iso8601
 from weewx_clearskies_api.providers._common.errors import (
     KeyInvalid,
     ProviderProtocolError,
-    QuotaExhausted,
-    TransientNetworkError,
 )
 from weewx_clearskies_api.providers._common.http import ProviderHTTPClient
 from weewx_clearskies_api.providers._common.rate_limiter import RateLimiter
@@ -229,7 +227,7 @@ class _AerisHourlyPeriod(BaseModel):
 
     model_config = ConfigDict(extra="ignore")
 
-    timestamp: int | None = None
+    timestamp: int
     dateTimeISO: str
     # Temperature — both unit systems present in payload; module picks per target_unit
     tempC: float | None = None
@@ -270,7 +268,7 @@ class _AerisDayNightPeriod(BaseModel):
 
     model_config = ConfigDict(extra="ignore")
 
-    timestamp: int | None = None
+    timestamp: int
     dateTimeISO: str
     # Temperature extremes — both unit systems
     maxTempC: float | None = None
@@ -634,7 +632,7 @@ def _daynight_periods_to_daily(
 # ---------------------------------------------------------------------------
 
 
-def _detect_discussion(
+def _extract_aeris_discussion(
     daynight_raw: dict[str, Any],
     first_period_raw: dict[str, Any] | None,
     *,
@@ -693,7 +691,10 @@ def _detect_discussion(
                 issued_at = to_utc_iso8601_from_offset(
                     raw_dt, provider_id=provider_id, domain=domain
                 )
-            except Exception:
+            except ProviderProtocolError:
+                # to_utc_iso8601_from_offset raises ProviderProtocolError on
+                # malformed input. Discussion issuedAt is best-effort; absent
+                # is acceptable per canonical §3.5 (issuedAt nullable).
                 logger.debug("Aeris: could not parse dateTimeISO for discussion issuedAt")
                 issued_at = None
 
@@ -740,7 +741,7 @@ def _to_canonical(
         raw_periods = daynight_raw["periods"]
         first_period_raw = raw_periods[0] if raw_periods else None
 
-    discussion = _detect_discussion(
+    discussion = _extract_aeris_discussion(
         daynight_raw=daynight_raw,
         first_period_raw=first_period_raw,
         provider_id=PROVIDER_ID,
@@ -786,28 +787,13 @@ def _fetch_hourly(
     }
 
     _rate_limiter.acquire()
-    try:
-        response = client.get(url, params=params)
-    except TransientNetworkError:
-        raise
-    except Exception as exc:
-        # ProviderHTTPClient translates 4xx/5xx to taxonomy errors; re-raise.
-        status = getattr(exc, "status_code", None)
-        if status == 401:
-            raise KeyInvalid(
-                "Aeris returned 401 — invalid client_id or client_secret",
-                provider_id=PROVIDER_ID,
-                domain=DOMAIN,
-                status_code=401,
-            ) from exc
-        if status == 429:
-            raise QuotaExhausted(
-                "Aeris returned 429 — rate limit exceeded",
-                provider_id=PROVIDER_ID,
-                domain=DOMAIN,
-                status_code=429,
-            ) from exc
-        raise
+    # ProviderHTTPClient.get raises canonical taxonomy exceptions (KeyInvalid,
+    # QuotaExhausted, TransientNetworkError, ProviderProtocolError) with all
+    # structured attributes set (status_code, retry_after_seconds). Let them
+    # propagate; do NOT re-wrap (3b-4 audit F1/F2: re-construction dropped
+    # retry_after_seconds from QuotaExhausted, and `except Exception` violates
+    # rules/coding.md §3).
+    response = client.get(url, params=params)
 
     return _parse_aeris_envelope(response, model_class=_AerisHourlyResponse, call_label="hourly")
 
@@ -837,27 +823,9 @@ def _fetch_daynight(
     }
 
     _rate_limiter.acquire()
-    try:
-        response = client.get(url, params=params)
-    except TransientNetworkError:
-        raise
-    except Exception as exc:
-        status = getattr(exc, "status_code", None)
-        if status == 401:
-            raise KeyInvalid(
-                "Aeris returned 401 — invalid client_id or client_secret",
-                provider_id=PROVIDER_ID,
-                domain=DOMAIN,
-                status_code=401,
-            ) from exc
-        if status == 429:
-            raise QuotaExhausted(
-                "Aeris returned 429 — rate limit exceeded",
-                provider_id=PROVIDER_ID,
-                domain=DOMAIN,
-                status_code=429,
-            ) from exc
-        raise
+    # ProviderHTTPClient.get raises canonical taxonomy exceptions; let them
+    # propagate (3b-4 audit F1/F2 — see _fetch_hourly).
+    response = client.get(url, params=params)
 
     raw_response_list = _parse_aeris_envelope_raw(response, call_label="daynight")
     raw_first = raw_response_list[0] if raw_response_list else {}
