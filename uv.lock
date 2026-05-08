@@ -82,6 +82,19 @@ wheels = [
 ]
 
 [[package]]
+name = "fakeredis"
+version = "2.26.2"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "redis" },
+    { name = "sortedcontainers" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/06/c9/078a39baa743cd6def32b7bcc33a6853e48a5334b2e59034c6734c0747a4/fakeredis-2.26.2.tar.gz", hash = "sha256:3ee5003a314954032b96b1365290541346c9cc24aab071b52cc983bb99ecafbf", size = 150563, upload-time = "2024-12-17T20:10:50.468Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/d8/8f/9697564d0052a400ca23680c08c8f84066bf3282bd0cb03aa180cab6f855/fakeredis-2.26.2-py3-none-any.whl", hash = "sha256:86d4129df001efc25793cb334008160fccc98425d9f94de47884a92b63988c14", size = 103477, upload-time = "2024-12-17T20:10:45.18Z" },
+]
+
+[[package]]
 name = "fastapi"
 version = "0.136.1"
 source = { registry = "https://pypi.org/simple" }
@@ -520,6 +533,27 @@ wheels = [
 ]
 
 [[package]]
+name = "redis"
+version = "7.4.0"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/7b/7f/3759b1d0d72b7c92f0d70ffd9dc962b7b7b5ee74e135f9d7d8ab06b8a318/redis-7.4.0.tar.gz", hash = "sha256:64a6ea7bf567ad43c964d2c30d82853f8df927c5c9017766c55a1d1ed95d18ad", size = 4943913, upload-time = "2026-03-24T09:14:37.53Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/74/3a/95deec7db1eb53979973ebd156f3369a72732208d1391cd2e5d127062a32/redis-7.4.0-py3-none-any.whl", hash = "sha256:a9c74a5c893a5ef8455a5adb793a31bb70feb821c86eccb62eebef5a19c429ec", size = 409772, upload-time = "2026-03-24T09:14:35.968Z" },
+]
+
+[[package]]
+name = "respx"
+version = "0.22.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "httpx" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/f4/7c/96bd0bc759cf009675ad1ee1f96535edcb11e9666b985717eb8c87192a95/respx-0.22.0.tar.gz", hash = "sha256:3c8924caa2a50bd71aefc07aa812f2466ff489f1848c96e954a5362d17095d91", size = 28439, upload-time = "2024-12-19T22:33:59.374Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/8e/67/afbb0978d5399bc9ea200f1d4489a23c9a1dad4eee6376242b8182389c79/respx-0.22.0-py2.py3-none-any.whl", hash = "sha256:631128d4c9aba15e56903fb5f66fb1eff412ce28dd387ca3a81339e52dbd3ad0", size = 25127, upload-time = "2024-12-19T22:33:57.837Z" },
+]
+
+[[package]]
 name = "ruff"
 version = "0.11.9"
 source = { registry = "https://pypi.org/simple" }
@@ -580,6 +614,15 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/c9/8c/98bf5d9042218580fc10c4ba0c51b9af26bc73b614ce64341c0dfad39074/skyfield-1.54.tar.gz", hash = "sha256:bf8b79d6dbbe1add0327aca485d6388bb6a13cab70528d015913a9b07a1d6903", size = 346829, upload-time = "2026-01-18T19:16:15.114Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/e7/8a/f196038b2bea40c372d900803dac0d5e4eab578cb05b92ff7172ced4c1cf/skyfield-1.54-py3-none-any.whl", hash = "sha256:c9b313185448963ea7fa4cf8e4298ba028b179b80ebd4c5675497519f21c04a2", size = 370380, upload-time = "2026-01-18T19:16:13.806Z" },
+]
+
+[[package]]
+name = "sortedcontainers"
+version = "2.4.0"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/e8/c4/ba2f8066cceb6f23394729afe52f3bf7adec04bf9ed2c820b39e19299111/sortedcontainers-2.4.0.tar.gz", hash = "sha256:25caa5a06cc30b6b83d11423433f65d1f9d76c4c6a0c90e3379eaa43b9bfdb88", size = 30594, upload-time = "2021-05-16T22:03:42.897Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/32/46/9cb0e58b2deb7f82b84065f37f3bffeb12413f947f9388e4cac22c4621ce/sortedcontainers-2.4.0-py2.py3-none-any.whl", hash = "sha256:a163dcaede0f1c021485e957a39245190e74249897e2ae4b2aa38595db237ee0", size = 29575, upload-time = "2021-05-16T22:03:41.177Z" },
 ]
 
 [[package]]
@@ -841,9 +884,11 @@ dependencies = [
     { name = "cachetools" },
     { name = "configobj" },
     { name = "fastapi" },
+    { name = "httpx" },
     { name = "pydantic" },
     { name = "pydantic-settings" },
     { name = "pymysql" },
+    { name = "redis" },
     { name = "skyfield" },
     { name = "sqlalchemy" },
     { name = "uvicorn", extra = ["standard"] },
@@ -851,11 +896,13 @@ dependencies = [
 
 [package.optional-dependencies]
 dev = [
+    { name = "fakeredis" },
     { name = "httpx" },
     { name = "mypy" },
     { name = "pytest" },
     { name = "pytest-asyncio" },
     { name = "pytest-timeout" },
+    { name = "respx" },
     { name = "ruff" },
 ]
 
@@ -863,7 +910,9 @@ dev = [
 requires-dist = [
     { name = "cachetools", specifier = "==5.5.2" },
     { name = "configobj", specifier = "==5.0.9" },
+    { name = "fakeredis", marker = "extra == 'dev'", specifier = "==2.26.2" },
     { name = "fastapi", specifier = "==0.136.1" },
+    { name = "httpx", specifier = ">=0.28.1" },
     { name = "httpx", marker = "extra == 'dev'", specifier = "==0.28.1" },
     { name = "mypy", marker = "extra == 'dev'", specifier = "==1.15.0" },
     { name = "pydantic", specifier = "==2.11.4" },
@@ -872,6 +921,8 @@ requires-dist = [
     { name = "pytest", marker = "extra == 'dev'", specifier = "==8.3.5" },
     { name = "pytest-asyncio", marker = "extra == 'dev'", specifier = "==0.26.0" },
     { name = "pytest-timeout", marker = "extra == 'dev'", specifier = "==2.3.1" },
+    { name = "redis", specifier = ">=5.0.0" },
+    { name = "respx", marker = "extra == 'dev'", specifier = "==0.22.0" },
     { name = "ruff", marker = "extra == 'dev'", specifier = "==0.11.9" },
     { name = "skyfield", specifier = ">=1.48" },
     { name = "sqlalchemy", specifier = "==2.0.49" },
