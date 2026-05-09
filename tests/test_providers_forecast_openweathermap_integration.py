@@ -509,10 +509,13 @@ class TestIntegrationQ1BasicTierEmptyBundle:
         """
         from weewx_clearskies_api.endpoints import forecast as forecast_endpoint  # noqa: PLC0415
 
-        # Explicitly clear any leftover appid state from prior tests.
-        forecast_endpoint.wire_openweathermap_credentials(None)
         _, app = _wire_integration_stack(db_engine, forecast_provider="openweathermap")
         client = TestClient(app, raise_server_exceptions=False)
+
+        # Clear appid AFTER stack wiring — _wire_integration_stack calls
+        # create_app() which wires the appid from env via
+        # wire_forecast_settings(). The pre-clear must come after to override.
+        forecast_endpoint.wire_openweathermap_credentials(None)
 
         # No respx mock — the request never reaches OWM (KeyInvalid raised
         # before any outbound call).
