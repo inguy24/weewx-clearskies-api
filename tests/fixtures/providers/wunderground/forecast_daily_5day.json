@@ -1,0 +1,132 @@
+{
+  "calendarDayTemperatureMax": [64, 66, 70, 68, 65],
+  "calendarDayTemperatureMin": [48, 49, 52, 51, 50],
+  "dayOfWeek": ["Thursday", "Friday", "Saturday", "Sunday", "Monday"],
+  "expirationTimeUtc": [1746028380, 1746028380, 1746028380, 1746028380, 1746028380],
+  "moonPhase": ["Waxing Gibbous", "Full Moon", "Waning Gibbous", "Last Quarter", "Waning Crescent"],
+  "moonPhaseCode": ["WXG", "F", "WNG", "LQ", "WNC"],
+  "moonPhaseDay": [10, 11, 12, 13, 14],
+  "moonriseTimeLocal": [
+    "2026-04-30T15:00:00-0700",
+    "2026-05-01T15:45:00-0700",
+    "2026-05-02T16:30:00-0700",
+    "2026-05-03T17:15:00-0700",
+    "2026-05-04T18:00:00-0700"
+  ],
+  "moonsetTimeLocal": [
+    "2026-05-01T03:30:00-0700",
+    "2026-05-02T04:15:00-0700",
+    "2026-05-03T05:00:00-0700",
+    "2026-05-04T05:45:00-0700",
+    "2026-05-05T06:30:00-0700"
+  ],
+  "narrative": [
+    "Mostly cloudy. High 64F. Winds SW at 5 to 10 mph.",
+    "Partly cloudy skies with a chance of afternoon showers. High 66F. Winds W at 8 to 12 mph.",
+    "Sunshine and pleasant. High 70F. Winds NW at 5 to 10 mph.",
+    "Mostly cloudy with a few showers developing. High 68F. Winds SW at 6 to 11 mph.",
+    "Partly cloudy. High 65F. Winds WSW at 5 to 8 mph."
+  ],
+  "qpf": [0.0, 0.12, 0.0, 0.08, 0.0],
+  "qpfSnow": [0.0, 0.0, 0.0, 0.0, 0.0],
+  "sunriseTimeUtc": [1746017700, 1746104100, 1746190500, 1746276900, 1746363300],
+  "sunriseTimeLocal": [
+    "2026-04-30T06:15:00-0700",
+    "2026-05-01T06:15:00-0700",
+    "2026-05-02T06:14:00-0700",
+    "2026-05-03T06:13:00-0700",
+    "2026-05-04T06:12:00-0700"
+  ],
+  "sunsetTimeUtc": [1746063900, 1746150300, 1746236700, 1746323100, 1746409500],
+  "sunsetTimeLocal": [
+    "2026-04-30T19:05:00-0700",
+    "2026-05-01T19:05:00-0700",
+    "2026-05-02T19:06:00-0700",
+    "2026-05-03T19:07:00-0700",
+    "2026-05-04T19:08:00-0700"
+  ],
+  "temperatureMax": [64, 66, 70, 68, 65],
+  "temperatureMin": [48, 49, 52, 51, 50],
+  "validTimeLocal": [
+    "2026-04-30T07:00:00-0700",
+    "2026-05-01T07:00:00-0700",
+    "2026-05-02T07:00:00-0700",
+    "2026-05-03T07:00:00-0700",
+    "2026-05-04T07:00:00-0700"
+  ],
+  "validTimeUtc": [1746021600, 1746108000, 1746194400, 1746280800, 1746367200],
+  "daypart": [
+    {
+      "cloudCover": [60, 40, 50, 70, 20, 30, 55, 75, 30, 40],
+      "dayOrNight": ["D", "N", "D", "N", "D", "N", "D", "N", "D", "N"],
+      "daypartName": [
+        "Today", "Tonight",
+        "Friday", "Friday Night",
+        "Saturday", "Saturday Night",
+        "Sunday", "Sunday Night",
+        "Monday", "Monday Night"
+      ],
+      "iconCode": [28, 27, 39, 45, 30, 29, 38, 47, 34, 29],
+      "iconCodeExtend": [2800, 2700, 3900, 4500, 3000, 2900, 3800, 4700, 3400, 2900],
+      "narrative": [
+        "Mostly cloudy. High 64F. Winds SW at 5 to 10 mph.",
+        "Mostly cloudy. Low 48F. Winds SW at 3 to 7 mph.",
+        "A chance of afternoon showers. High 66F. Winds W at 8 to 12 mph.",
+        "Showers likely. Low 49F. Winds WSW at 5 to 9 mph.",
+        "Mostly sunny. High 70F. Winds NW at 5 to 10 mph.",
+        "Partly cloudy. Low 52F. Winds light and variable.",
+        "Cloudy with a few showers. High 68F. Winds SW at 6 to 11 mph.",
+        "Showers in the evening. Low 51F. Winds W at 4 to 8 mph.",
+        "Partly cloudy. High 65F. Winds WSW at 5 to 8 mph.",
+        "Partly cloudy. Low 50F. Winds light and variable."
+      ],
+      "precipChance": [20, 10, 40, 60, 5, 15, 50, 40, 10, 20],
+      "precipType": ["rain", "rain", "rain", "rain", null, "rain", "rain", "rain", null, null],
+      "qpf": [0.0, 0.0, 0.08, 0.04, 0.0, 0.0, 0.05, 0.03, 0.0, 0.0],
+      "qpfSnow": [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
+      "qualifierCode": [null, null, null, null, null, null, null, null, null, null],
+      "qualifierPhrase": [null, null, null, null, null, null, null, null, null, null],
+      "relativeHumidity": [70, 80, 72, 85, 60, 68, 75, 82, 65, 72],
+      "snowRange": ["", "", "", "", "", "", "", "", "", ""],
+      "temperature": [64, 48, 66, 49, 70, 52, 68, 51, 65, 50],
+      "temperatureHeatIndex": [64, 48, 66, 49, 70, 52, 68, 51, 65, 50],
+      "temperatureWindChill": [54, 43, 56, 44, 60, 48, 58, 47, 55, 46],
+      "thunderCategory": [
+        "No thunder", "No thunder", "No thunder", "No thunder", "No thunder",
+        "No thunder", "No thunder", "No thunder", "No thunder", "No thunder"
+      ],
+      "thunderIndex": [0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+      "uvDescription": ["Moderate", "Low", "Moderate", "Low", "High", "Low", "Moderate", "Low", "Moderate", "Low"],
+      "uvIndex": [4, 0, 5, 0, 7, 0, 4, 0, 5, 0],
+      "windDirection": [220, 200, 260, 240, 310, 270, 225, 240, 250, 220],
+      "windDirectionCardinal": ["SW", "SSW", "W", "WSW", "NW", "W", "SW", "WSW", "WSW", "SW"],
+      "windPhrase": [
+        "Winds SW at 5 to 10 mph.",
+        "Winds SW at 3 to 7 mph.",
+        "Winds W at 8 to 12 mph.",
+        "Winds WSW at 5 to 9 mph.",
+        "Winds NW at 5 to 10 mph.",
+        "Winds light and variable.",
+        "Winds SW at 6 to 11 mph.",
+        "Winds W at 4 to 8 mph.",
+        "Winds WSW at 5 to 8 mph.",
+        "Winds light and variable."
+      ],
+      "windSpeed": [7, 5, 10, 7, 8, 3, 9, 6, 7, 3],
+      "wxPhraseLong": [
+        "Mostly Cloudy", "Mostly Clear",
+        "Scattered Showers", "Showers",
+        "Sunny", "Partly Cloudy",
+        "Cloudy with Showers", "Showers",
+        "Partly Cloudy", "Partly Cloudy"
+      ],
+      "wxPhraseShort": [
+        "M Cloudy", "M Clear",
+        "Sct Showers", "Showers",
+        "Sunny", "P Cloudy",
+        "Cld/Showers", "Showers",
+        "P Cloudy", "P Cloudy"
+      ]
+    }
+  ]
+}

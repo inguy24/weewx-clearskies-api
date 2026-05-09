@@ -1,0 +1,5 @@
+{
+  "statusCode": 401,
+  "error": "Unauthorized",
+  "message": "Invalid API key. Please verify your API key and ensure your PWS is active at wunderground.com/member/api-keys"
+}
