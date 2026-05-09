@@ -1329,6 +1329,36 @@ class TestFetch:
             f"Expected 1 WARN log for basic-tier 401, got {len(warn_records)}"
         )
 
+    def test_basic_tier_401_caches_empty_bundle_for_ttl(self) -> None:
+        """Basic-tier 401 caches the empty bundle (3b-5 audit F2 regression).
+
+        Without caching, basic-tier-misconfigured deployments hammer OWM with
+        401s on every dashboard poll (capped only by rate limiter, ~432K/day).
+        After F2, the empty bundle is cached for the same TTL as the success
+        path so subsequent calls return the cached bundle without an OWM call.
+        """
+        from weewx_clearskies_api.providers.forecast import openweathermap  # noqa: PLC0415
+
+        error_fixture = _load_fixture("error_401_basic_tier.json")
+        with respx.mock(assert_all_called=False) as mock:
+            mock_route = mock.get(_OWM_ONECALL_URL).mock(
+                return_value=httpx.Response(401, json=error_fixture)
+            )
+            # First call hits OWM and caches the empty bundle
+            bundle1 = openweathermap.fetch(
+                lat=_LAT, lon=_LON, target_unit="US", appid=_TEST_APPID
+            )
+            # Second call should hit cache, NOT make another OWM call
+            bundle2 = openweathermap.fetch(
+                lat=_LAT, lon=_LON, target_unit="US", appid=_TEST_APPID
+            )
+
+        assert bundle1.hourly == [] and bundle1.daily == []
+        assert bundle2.hourly == [] and bundle2.daily == []
+        assert mock_route.call_count == 1, (
+            f"Expected 1 OWM call (second served from cache), got {mock_route.call_count}"
+        )
+
     def test_quota_exceeded_429_raises_quota_exhausted(self) -> None:
         """HTTP 429 from OWM → QuotaExhausted propagated."""
         from weewx_clearskies_api.providers.forecast import openweathermap  # noqa: PLC0415

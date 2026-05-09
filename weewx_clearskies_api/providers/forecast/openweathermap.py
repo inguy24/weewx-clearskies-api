@@ -882,13 +882,27 @@ def fetch(
                     "(Q1 user decision 2026-05-08; brief lead-call 18)",
                     extra={"provider_id": PROVIDER_ID, "domain": DOMAIN},
                 )
-            return ForecastBundle(
+            empty_bundle = ForecastBundle(
                 hourly=[],
                 daily=[],
                 discussion=None,
                 source=PROVIDER_ID,
                 generatedAt=utc_isoformat(datetime.now(tz=UTC)),
             )
+            # Cache the empty bundle for the same TTL as the success path
+            # (ADR-017).  Without this cache.set, basic-tier-misconfigured
+            # deployments hit /data/3.0/onecall 401 on every dashboard poll —
+            # capped only by the rate limiter (5 req/s = 432K/day) vs the
+            # success path's 48 calls/day.  Brief Q1 covered the taxonomy
+            # decision (graceful empty bundle vs 502); cache parity with the
+            # success path is the operator-friendly operationalization.
+            # 3b-5 audit F2 remediation 2026-05-09.
+            get_cache().set(
+                cache_key,
+                empty_bundle.model_dump(mode="json"),
+                ttl_seconds=DEFAULT_FORECAST_TTL_SECONDS,
+            )
+            return empty_bundle
         # status_code != 401 — defensive: re-raise as KeyInvalid (let canonical
         # taxonomy handle; 502 ProviderProblem KeyInvalid).
         raise
