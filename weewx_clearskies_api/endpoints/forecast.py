@@ -20,6 +20,12 @@ Behavior decision tree per brief §per-endpoint spec:
  13. OWM returns 401 (basic-tier key) → 200 ForecastResponse with hourly=[], daily=[]
      (Q1 user decision 2026-05-08; graceful empty bundle, not an error)
  14. OWM returns 429 → 503 ProviderProblem (QuotaExhausted) + Retry-After
+ 15. Wunderground api_key or pws_station_id unset → 502 ProviderProblem (KeyInvalid)
+ 16. Wunderground returns 401 (apiKey invalid or PWS no longer active) →
+     502 ProviderProblem (KeyInvalid); standard KeyInvalid 502 propagation.
+ 17. Wunderground returns 429 → 503 ProviderProblem (QuotaExhausted) + Retry-After
+ 18. Wunderground returns 200 → normalize daily (5 entries) per canonical §4.1.3;
+     hourly=[] always (PARTIAL-DOMAIN); discussion=null always; return 200.
 
 Slice-after-cache pattern (ADR-017 §Cache key):
   Cache stores the FULL bundle (every hourly + daily point returned by provider).
@@ -55,6 +61,12 @@ OWM appid: wired via wire_openweathermap_credentials() (called from
   wire_forecast_settings()). Module-level _openweathermap_appid is passed to
   openweathermap.fetch() from the dispatch branch.
   Missing appid → KeyInvalid at fetch time (same loud-failure posture as Aeris).
+
+Wunderground credentials: wired via wire_wunderground_credentials() (called from
+  wire_forecast_settings()). Module-level _wunderground_api_key and
+  _wunderground_pws_station_id passed to wunderground.fetch() from the dispatch branch.
+  Missing either credential → KeyInvalid at fetch time (same loud-failure posture).
+  PARTIAL-DOMAIN: Wunderground bundle ships hourly=[] and discussion=None always.
 """
 
 from __future__ import annotations
@@ -145,13 +157,47 @@ def wire_openweathermap_credentials(appid: str | None) -> None:
     _openweathermap_appid = appid
 
 
+# ---------------------------------------------------------------------------
+# Module-level Wunderground credentials wiring (populated at startup)
+# Mirrors wire_aeris_credentials pattern but takes two args (api_key + pws_station_id).
+# Both are required per ADR-007 line 79 defense-in-depth gate (brief lead-call 14).
+# ---------------------------------------------------------------------------
+
+_wunderground_api_key: str | None = None
+_wunderground_pws_station_id: str | None = None
+
+
+def wire_wunderground_credentials(api_key: str | None, pws_station_id: str | None) -> None:
+    """Store Wunderground credentials read from env vars at startup.
+
+    Per ADR-027 §3, secrets come from env vars (loaded by systemd
+    EnvironmentFile / docker-compose env_file).  Long-form provider-scoped
+    env var names (WEEWX_CLEARSKIES_WUNDERGROUND_API_KEY and
+    WEEWX_CLEARSKIES_WUNDERGROUND_PWS_STATION_ID) per 3b-4/3b-5 precedent.
+
+    Both credentials are required for Wunderground per ADR-007 line 79:
+      - api_key: sent as query param on every forecast request.
+      - pws_station_id: config-time gate (NOT in the URL); defense-in-depth
+        to ensure operator has an active PWS (apiKeys are only issued to
+        active PWS contributors).
+
+    Tests that don't care about Wunderground leave both as None; if
+    [forecast] provider = wunderground and either is unset, the module raises
+    KeyInvalid at fetch time per brief lead-call 14 (loud failure beats silent
+    disable).
+    """
+    global _wunderground_api_key, _wunderground_pws_station_id  # noqa: PLW0603
+    _wunderground_api_key = api_key
+    _wunderground_pws_station_id = pws_station_id
+
+
 def wire_forecast_settings(settings: object) -> None:
     """Wire forecast-related settings from the Settings object.
 
     Convenience wrapper for __main__.py — extracts nws_user_agent_contact,
-    Aeris credentials, and OWM appid from settings.forecast and calls the
-    per-provider wire_*() helpers. Mirrors wire_alerts_settings() in
-    endpoints/alerts.py.
+    Aeris credentials, OWM appid, and Wunderground credentials from
+    settings.forecast and calls the per-provider wire_*() helpers.
+    Mirrors wire_alerts_settings() in endpoints/alerts.py.
     """
     forecast_settings = getattr(settings, "forecast", None)
     contact = getattr(forecast_settings, "nws_user_agent_contact", None)
@@ -163,6 +209,10 @@ def wire_forecast_settings(settings: object) -> None:
 
     owm_appid = getattr(forecast_settings, "openweathermap_appid", None)
     wire_openweathermap_credentials(owm_appid)
+
+    wu_api_key = getattr(forecast_settings, "wunderground_api_key", None)
+    wu_pws_station_id = getattr(forecast_settings, "wunderground_pws_station_id", None)
+    wire_wunderground_credentials(wu_api_key, wu_pws_station_id)
 
 
 # ---------------------------------------------------------------------------
@@ -305,6 +355,25 @@ def get_forecast(
             lon=station.longitude,
             target_unit=target_unit,
             appid=_openweathermap_appid,
+        )
+    elif provider_id == "wunderground":
+        from weewx_clearskies_api.providers.forecast import wunderground  # noqa: PLC0415
+
+        # fetch() returns the FULL canonical bundle (one upstream call:
+        # GET /v3/wx/forecast/daily/5day with geocode=<lat>,<lon>).
+        # PARTIAL-DOMAIN: bundle.hourly=[] always; bundle.discussion=None always.
+        # Cache stores the full bundle; slice is applied below after cache lookup.
+        # _wunderground_api_key + _wunderground_pws_station_id set at startup
+        # via wire_forecast_settings().
+        # Missing either credential → KeyInvalid at fetch time (loud failure).
+        # A 401 from Wunderground → KeyInvalid 502 (apiKey invalid OR PWS no
+        # longer active; bare canonical exception propagation per L2 rule).
+        bundle = wunderground.fetch(
+            lat=station.latitude,
+            lon=station.longitude,
+            target_unit=target_unit,
+            api_key=_wunderground_api_key,
+            pws_station_id=_wunderground_pws_station_id,
         )
     else:
         # Unknown provider should have been caught at startup by _wire_providers_from_config.
