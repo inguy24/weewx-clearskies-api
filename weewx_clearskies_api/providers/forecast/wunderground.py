@@ -464,7 +464,6 @@ def _wu_to_daily_point(
       weatherText:         daypart.wxPhraseShort[2*i]
       narrative:           narrative[i]  (top-level, NOT daypart narrative)
       windGustMax:         None (canonical §4.1.3 Wunderground column = "—")
-      precipType:          _wu_precip_type_to_canonical(daypart.precipType[2*i])
     """
     dp_idx = 2 * day_idx   # Day period index within the 10-element daypart arrays
 
@@ -501,7 +500,6 @@ def _wu_to_daily_point(
     uv_index_max: int | None = None
     weather_code: str | None = None
     weather_text: str | None = None
-    precip_type: str | None = None
 
     if daypart is not None:
         precip_prob = _safe_get(daypart.precipChance, dp_idx)
@@ -513,9 +511,9 @@ def _wu_to_daily_point(
             weather_code = str(icon_code)
 
         weather_text = _safe_get(daypart.wxPhraseShort, dp_idx)
-
-        precip_type_raw = _safe_get(daypart.precipType, dp_idx)
-        precip_type = _wu_precip_type_to_canonical(precip_type_raw)
+        # precipType: DailyForecastPoint has no precipType field (HourlyForecastPoint-
+        # only per canonical §3.3/§3.4); _wu_precip_type_to_canonical() helper is
+        # defined for this module per brief lead-call 17 but not applied to daily points.
 
     return DailyForecastPoint(
         validDate=valid_date,
