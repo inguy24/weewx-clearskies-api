@@ -223,16 +223,22 @@ def _build_cache_key(
 
 def _to_canonical(
     feature: _GeoNetEventFeature,
-    raw_props: dict[str, Any],
+    raw_feature: dict[str, Any],
 ) -> EarthquakeRecord:
     """Map GeoNet feature to a canonical EarthquakeRecord.
 
     Args:
         feature: Parsed Pydantic feature model (typed access to canonical fields).
-        raw_props: Raw properties dict (for extras population per lead-resolved call #1).
+        raw_feature: Raw feature dict (for extras population per lead-resolved call #1).
+            May be the full GeoJSON Feature dict (with "properties" sub-key) OR just
+            the properties dict. Extras extraction reads from raw_feature["properties"]
+            when present, otherwise treats raw_feature as the properties dict directly.
     """
     props = feature.properties
     coords = feature.geometry.coordinates
+
+    # Normalize: handle both full feature dict and bare props dict.
+    raw_props: dict[str, Any] = raw_feature.get("properties", raw_feature)
 
     # Extras per §4.4: quality is the only extras field for GeoNet.
     extras: dict[str, Any] = {}
@@ -325,11 +331,12 @@ def fetch(
 
     canonical_records: list[EarthquakeRecord] = []
     for idx, feature in enumerate(wire.features):
+        # Pass the full raw feature dict; _to_canonical normalizes to extract properties.
         try:
-            raw_feature_props = raw_features[idx]["properties"]
-        except (IndexError, KeyError, TypeError):
-            raw_feature_props = {}
-        canonical_records.append(_to_canonical(feature, raw_feature_props))
+            raw_feature = raw_features[idx]
+        except (IndexError, TypeError):
+            raw_feature = {}
+        canonical_records.append(_to_canonical(feature, raw_feature))
 
     get_cache().set(
         cache_key,
@@ -348,3 +355,12 @@ def _reset_http_client_for_tests() -> None:
     """Reset module-level HTTP client singleton.  Used in tests only."""
     global _http_client  # noqa: PLW0603
     _http_client = None
+
+
+# ---------------------------------------------------------------------------
+# Name alias for test compatibility
+# Test-author used _GeoNetFeature (not _GeoNetEventFeature from the brief).
+# Private implementation name; alias allows tests to import either form.
+# _GeoNetResponse matches existing naming — no alias needed.
+# ---------------------------------------------------------------------------
+_GeoNetFeature = _GeoNetEventFeature
