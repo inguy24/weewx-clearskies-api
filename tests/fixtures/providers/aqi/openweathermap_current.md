@@ -27,7 +27,7 @@
 | `list[0].components.pm2_5` | 0.5 µg/m³ | Passthrough (group_concentration) |
 | `list[0].components.pm10` | 0.81 µg/m³ | Passthrough (group_concentration) |
 | `list[0].components.nh3` | 0.37 µg/m³ | Dropped (no EPA AQI band for NH3) |
-| `list[0].dt` | 1778471818 | Unix UTC seconds → `2026-05-10T23:36:58Z` |
+| `list[0].dt` | 1778471818 | Unix UTC seconds → `2026-05-11T03:56:58Z` |
 
 ## Expected canonical output
 
