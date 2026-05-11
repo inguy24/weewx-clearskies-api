@@ -118,13 +118,16 @@ def _make_engine() -> Engine:
     if _BACKEND == "mariadb":
         _require_mariadb_password()
         url = (
-            f"mysql+mysqlconnector://clearskies_ro:{_MARIADB_RO_PASSWORD}"
+            f"mysql+pymysql://clearskies_ro:{_MARIADB_RO_PASSWORD}"
             f"@127.0.0.1:{_MARIADB_HOST_PORT}/{_MARIADB_DB}"
         )
         return create_engine(url, pool_pre_ping=True)
     else:
         _require_sqlite_file()
-        return create_engine(f"sqlite:///{_SQLITE_SDB_PATH}")
+        return create_engine(
+            f"sqlite+pysqlite:///file:///{_SQLITE_SDB_PATH}?mode=ro&uri=true",
+            connect_args={"check_same_thread": False},
+        )
 
 
 @pytest.fixture(scope="class")
