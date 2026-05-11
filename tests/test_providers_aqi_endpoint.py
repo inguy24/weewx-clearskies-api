@@ -510,6 +510,8 @@ class TestAqiHistory:
 
 # Aeris AQI base URL for respx mocking
 _AERIS_AQ_BASE_URL = "https://data.api.xweather.com"
+# Full URL as constructed by fetch(): lat/lon rounded to 6dp per aeris.py fetch()
+_AERIS_AQ_URL = f"{_AERIS_AQ_BASE_URL}/airquality/{round(_LAT, 6)},{round(_LON, 6)}"
 _TEST_CLIENT_ID = "TEST_AERIS_ID"
 _TEST_CLIENT_SECRET = "TEST_AERIS_SECRET"
 
@@ -587,7 +589,7 @@ class TestAqiCurrentAerisRegistered:
         data = _load_fixture("aeris_current.json")
 
         with respx.mock(assert_all_called=False) as mock:
-            mock.get(_AERIS_AQ_BASE_URL).mock(
+            mock.get(_AERIS_AQ_URL).mock(
                 return_value=httpx.Response(200, json=data)
             )
             return client.get("/api/v1/aqi/current"), mock
@@ -700,7 +702,7 @@ class TestAqiCurrentAerisErrorPaths:
         client = TestClient(app, raise_server_exceptions=False)
 
         with respx.mock(assert_all_called=False):
-            respx.get(_AERIS_AQ_BASE_URL).mock(
+            respx.get(_AERIS_AQ_URL).mock(
                 return_value=httpx.Response(401, json={"error": "unauthorized"})
             )
             response = client.get("/api/v1/aqi/current")
@@ -718,7 +720,7 @@ class TestAqiCurrentAerisErrorPaths:
         client = TestClient(app, raise_server_exceptions=False)
 
         with respx.mock(assert_all_called=False):
-            respx.get(_AERIS_AQ_BASE_URL).mock(
+            respx.get(_AERIS_AQ_URL).mock(
                 return_value=httpx.Response(401, json={"error": "unauthorized"})
             )
             response = client.get("/api/v1/aqi/current")
@@ -734,7 +736,7 @@ class TestAqiCurrentAerisErrorPaths:
         client = TestClient(app, raise_server_exceptions=False)
 
         with respx.mock(assert_all_called=False):
-            respx.get(_AERIS_AQ_BASE_URL).mock(
+            respx.get(_AERIS_AQ_URL).mock(
                 return_value=httpx.Response(
                     429,
                     json={"reason": "too many requests"},
@@ -756,7 +758,7 @@ class TestAqiCurrentAerisErrorPaths:
         client = TestClient(app, raise_server_exceptions=False)
 
         with respx.mock(assert_all_called=False):
-            respx.get(_AERIS_AQ_BASE_URL).mock(
+            respx.get(_AERIS_AQ_URL).mock(
                 return_value=httpx.Response(
                     429,
                     json={"reason": "rate limit"},

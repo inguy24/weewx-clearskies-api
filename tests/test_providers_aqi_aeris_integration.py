@@ -70,7 +70,8 @@ _LON = -122.3321
 _LAT4 = round(_LAT, 4)
 _LON4 = round(_LON, 4)
 _AERIS_AQ_BASE_URL = "https://data.api.xweather.com"
-_AERIS_AQ_URL = f"{_AERIS_AQ_BASE_URL}/airquality/{_LAT},{_LON}"
+# Full URL as constructed by fetch(): lat/lon rounded to 6dp per aeris.py fetch()
+_AERIS_AQ_URL = f"{_AERIS_AQ_BASE_URL}/airquality/{round(_LAT, 6)},{round(_LON, 6)}"
 
 _TEST_CLIENT_ID = "INTEGRATION_TEST_CLIENT_ID"
 _TEST_CLIENT_SECRET = "INTEGRATION_TEST_CLIENT_SECRET"
@@ -284,7 +285,7 @@ class TestIntegrationAerisAqiHappyPath:
         data = _load_fixture("aeris_current.json")
 
         with respx.mock(assert_all_called=False):
-            respx.get(_AERIS_AQ_BASE_URL).mock(
+            respx.get(_AERIS_AQ_URL).mock(
                 return_value=httpx.Response(200, json=data)
             )
             response = integration_client.get("/api/v1/aqi/current")
@@ -298,7 +299,7 @@ class TestIntegrationAerisAqiHappyPath:
         data = _load_fixture("aeris_current.json")
 
         with respx.mock(assert_all_called=False):
-            respx.get(_AERIS_AQ_BASE_URL).mock(
+            respx.get(_AERIS_AQ_URL).mock(
                 return_value=httpx.Response(200, json=data)
             )
             response = integration_client.get("/api/v1/aqi/current")
@@ -313,7 +314,7 @@ class TestIntegrationAerisAqiHappyPath:
         data = _load_fixture("aeris_current.json")
 
         with respx.mock(assert_all_called=False):
-            respx.get(_AERIS_AQ_BASE_URL).mock(
+            respx.get(_AERIS_AQ_URL).mock(
                 return_value=httpx.Response(200, json=data)
             )
             response = integration_client.get("/api/v1/aqi/current")
@@ -329,7 +330,7 @@ class TestIntegrationAerisAqiHappyPath:
         data = _load_fixture("aeris_current.json")
 
         with respx.mock(assert_all_called=False):
-            respx.get(_AERIS_AQ_BASE_URL).mock(
+            respx.get(_AERIS_AQ_URL).mock(
                 return_value=httpx.Response(200, json=data)
             )
             response = integration_client.get("/api/v1/aqi/current")
@@ -344,7 +345,7 @@ class TestIntegrationAerisAqiHappyPath:
         data = _load_fixture("aeris_current.json")
 
         with respx.mock(assert_all_called=False):
-            respx.get(_AERIS_AQ_BASE_URL).mock(
+            respx.get(_AERIS_AQ_URL).mock(
                 return_value=httpx.Response(200, json=data)
             )
             response = integration_client.get("/api/v1/aqi/current")
@@ -359,7 +360,7 @@ class TestIntegrationAerisAqiHappyPath:
         data = _load_fixture("aeris_current.json")
 
         with respx.mock(assert_all_called=False):
-            respx.get(_AERIS_AQ_BASE_URL).mock(
+            respx.get(_AERIS_AQ_URL).mock(
                 return_value=httpx.Response(200, json=data)
             )
             response = integration_client.get("/api/v1/aqi/current")
@@ -375,7 +376,7 @@ class TestIntegrationAerisAqiHappyPath:
         data = _load_fixture("aeris_current.json")
 
         with respx.mock(assert_all_called=False):
-            respx.get(_AERIS_AQ_BASE_URL).mock(
+            respx.get(_AERIS_AQ_URL).mock(
                 return_value=httpx.Response(200, json=data)
             )
             response = integration_client.get("/api/v1/aqi/current")
@@ -388,7 +389,7 @@ class TestIntegrationAerisAqiHappyPath:
         data = _load_fixture("aeris_current.json")
 
         with respx.mock(assert_all_called=False):
-            respx.get(_AERIS_AQ_BASE_URL).mock(
+            respx.get(_AERIS_AQ_URL).mock(
                 return_value=httpx.Response(200, json=data)
             )
             response = integration_client.get("/api/v1/aqi/current")
@@ -402,7 +403,7 @@ class TestIntegrationAerisAqiHappyPath:
         data = _load_fixture("aeris_current.json")
 
         with respx.mock(assert_all_called=False):
-            respx.get(_AERIS_AQ_BASE_URL).mock(
+            respx.get(_AERIS_AQ_URL).mock(
                 return_value=httpx.Response(200, json=data)
             )
             response = integration_client.get("/api/v1/aqi/current")
@@ -444,7 +445,7 @@ class TestIntegrationAerisAqiErrorPaths:
     def test_provider_5xx_returns_502_rfc9457(self, integration_client: TestClient) -> None:
         """Provider 5xx → 502 application/problem+json."""
         with respx.mock(assert_all_called=False):
-            respx.get(_AERIS_AQ_BASE_URL).mock(
+            respx.get(_AERIS_AQ_URL).mock(
                 return_value=httpx.Response(500, json={"reason": "server error"})
             )
             response = integration_client.get("/api/v1/aqi/current")
@@ -459,7 +460,7 @@ class TestIntegrationAerisAqiErrorPaths:
     def test_provider_429_returns_503_rfc9457(self, integration_client: TestClient) -> None:
         """Provider 429 → 503 application/problem+json."""
         with respx.mock(assert_all_called=False):
-            respx.get(_AERIS_AQ_BASE_URL).mock(
+            respx.get(_AERIS_AQ_URL).mock(
                 return_value=httpx.Response(
                     429,
                     json={"reason": "too many requests"},
@@ -478,7 +479,7 @@ class TestIntegrationAerisAqiErrorPaths:
     def test_provider_429_includes_retry_after_header(self, integration_client: TestClient) -> None:
         """Provider 429 → 503 response includes Retry-After header (ADR-018)."""
         with respx.mock(assert_all_called=False):
-            respx.get(_AERIS_AQ_BASE_URL).mock(
+            respx.get(_AERIS_AQ_URL).mock(
                 return_value=httpx.Response(
                     429,
                     json={"reason": "rate limit"},
@@ -507,7 +508,7 @@ class TestIntegrationAerisAqiOpenApiSchema:
         data = _load_fixture("aeris_current.json")
 
         with respx.mock(assert_all_called=False):
-            respx.get(_AERIS_AQ_BASE_URL).mock(
+            respx.get(_AERIS_AQ_URL).mock(
                 return_value=httpx.Response(200, json=data)
             )
             response = integration_client.get("/api/v1/aqi/current")
@@ -535,7 +536,7 @@ class TestIntegrationAerisAqiOpenApiSchema:
         data = _load_fixture("aeris_current.json")
 
         with respx.mock(assert_all_called=False):
-            respx.get(_AERIS_AQ_BASE_URL).mock(
+            respx.get(_AERIS_AQ_URL).mock(
                 return_value=httpx.Response(200, json=data)
             )
             response = integration_client.get("/api/v1/aqi/current")
@@ -604,7 +605,7 @@ class TestIntegrationAerisAqiMemoryCache:
         data = _load_fixture("aeris_current.json")
 
         with respx.mock(assert_all_called=False) as mock:
-            mock.get(_AERIS_AQ_BASE_URL).mock(return_value=httpx.Response(200, json=data))
+            mock.get(_AERIS_AQ_URL).mock(return_value=httpx.Response(200, json=data))
             reading = aeris.fetch(
                 lat=_LAT,
                 lon=_LON,
@@ -643,7 +644,7 @@ class TestIntegrationAerisAqiMemoryCache:
 
         # First fetch — fills memory cache
         with respx.mock(assert_all_called=False) as mock:
-            mock.get(_AERIS_AQ_BASE_URL).mock(return_value=httpx.Response(200, json=data))
+            mock.get(_AERIS_AQ_URL).mock(return_value=httpx.Response(200, json=data))
             reading1 = aeris.fetch(
                 lat=_LAT,
                 lon=_LON,
