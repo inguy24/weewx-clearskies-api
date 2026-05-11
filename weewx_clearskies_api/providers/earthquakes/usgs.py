@@ -37,6 +37,7 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+from datetime import datetime
 from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
@@ -292,8 +293,8 @@ def fetch(
     lat: float,
     lon: float,
     radius_km: float,
-    from_dt: str | None,
-    to_dt: str | None,
+    from_dt: datetime | None,
+    to_dt: datetime | None,
 ) -> list[EarthquakeRecord]:
     """Call USGS FDSN-Event API and return canonical EarthquakeRecord models.
 
@@ -304,8 +305,8 @@ def fetch(
         lat: Station latitude (WGS84).
         lon: Station longitude (WGS84).
         radius_km: Radius in km from station to include events (server-side filter).
-        from_dt: ISO 8601 start time (passed to USGS starttime param). None = no lower bound.
-        to_dt: ISO 8601 end time (passed to USGS endtime param). None = no upper bound.
+        from_dt: Start time (passed to USGS starttime as ISO 8601). None = no lower bound.
+        to_dt: End time (passed to USGS endtime as ISO 8601). None = no upper bound.
 
     Returns:
         List of canonical EarthquakeRecord models, possibly empty.
@@ -316,7 +317,10 @@ def fetch(
         TransientNetworkError: Network/DNS failure or 5xx after retries.
         ProviderProtocolError: Response validation failed (USGS schema change).
     """
-    cache_key = _build_cache_key(lat, lon, radius_km, from_dt, to_dt)
+    from_iso = from_dt.isoformat() if from_dt is not None else None
+    to_iso = to_dt.isoformat() if to_dt is not None else None
+
+    cache_key = _build_cache_key(lat, lon, radius_km, from_iso, to_iso)
     cached_dicts = get_cache().get(cache_key)
     if cached_dicts is not None:
         return [EarthquakeRecord.model_validate(d) for d in cached_dicts]
@@ -330,10 +334,10 @@ def fetch(
         "maxradiuskm": radius_km,
         "orderby": "time",
     }
-    if from_dt is not None:
-        params["starttime"] = from_dt
-    if to_dt is not None:
-        params["endtime"] = to_dt
+    if from_iso is not None:
+        params["starttime"] = from_iso
+    if to_iso is not None:
+        params["endtime"] = to_iso
 
     response = _get_http_client().get(f"{BASE_URL}{PATH}", params=params)
 
@@ -353,17 +357,21 @@ def fetch(
         ) from exc
 
     # raw_features: list of raw dicts for extras population (lead-resolved call #1).
+    # zip(strict=True) makes the structural-equality assumption explicit; if the
+    # parsed wire and raw JSON ever diverge in length we want a clear failure.
     raw_features: list[dict[str, Any]] = raw_json.get("features", [])
+    try:
+        paired = list(zip(wire.features, raw_features, strict=True))
+    except ValueError as exc:
+        raise ProviderProtocolError(
+            f"USGS feature list length mismatch: {exc}",
+            provider_id=PROVIDER_ID,
+            domain=DOMAIN,
+        ) from exc
 
-    canonical_records: list[EarthquakeRecord] = []
-    for idx, feature in enumerate(wire.features):
-        # Pass the full raw feature dict (contains "properties" sub-key).
-        # _to_canonical normalizes to extract properties-level extras.
-        try:
-            raw_feature = raw_features[idx]
-        except (IndexError, TypeError):
-            raw_feature = {}
-        canonical_records.append(_to_canonical(feature, raw_feature))
+    canonical_records: list[EarthquakeRecord] = [
+        _to_canonical(feature, raw_feature) for feature, raw_feature in paired
+    ]
 
     get_cache().set(
         cache_key,

@@ -37,6 +37,7 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+from datetime import datetime
 from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
@@ -277,8 +278,8 @@ def fetch(
     lat: float,
     lon: float,
     radius_km: float,
-    from_dt: str | None,
-    to_dt: str | None,
+    from_dt: datetime | None,
+    to_dt: datetime | None,
 ) -> list[EarthquakeRecord]:
     """Call GeoNet /quake and return canonical EarthquakeRecord models.
 
@@ -299,7 +300,10 @@ def fetch(
         TransientNetworkError: Network/DNS failure or 5xx after retries.
         ProviderProtocolError: Response validation failed (GeoNet schema change).
     """
-    cache_key = _build_cache_key(lat, lon, radius_km, from_dt, to_dt)
+    from_iso = from_dt.isoformat() if from_dt is not None else None
+    to_iso = to_dt.isoformat() if to_dt is not None else None
+
+    cache_key = _build_cache_key(lat, lon, radius_km, from_iso, to_iso)
     cached_dicts = get_cache().get(cache_key)
     if cached_dicts is not None:
         return [EarthquakeRecord.model_validate(d) for d in cached_dicts]
@@ -327,15 +331,18 @@ def fetch(
         ) from exc
 
     raw_features: list[dict[str, Any]] = raw_json.get("features", [])
+    try:
+        paired = list(zip(wire.features, raw_features, strict=True))
+    except ValueError as exc:
+        raise ProviderProtocolError(
+            f"GeoNet feature list length mismatch: {exc}",
+            provider_id=PROVIDER_ID,
+            domain=DOMAIN,
+        ) from exc
 
-    canonical_records: list[EarthquakeRecord] = []
-    for idx, feature in enumerate(wire.features):
-        # Pass the full raw feature dict; _to_canonical normalizes to extract properties.
-        try:
-            raw_feature = raw_features[idx]
-        except (IndexError, TypeError):
-            raw_feature = {}
-        canonical_records.append(_to_canonical(feature, raw_feature))
+    canonical_records: list[EarthquakeRecord] = [
+        _to_canonical(feature, raw_feature) for feature, raw_feature in paired
+    ]
 
     get_cache().set(
         cache_key,

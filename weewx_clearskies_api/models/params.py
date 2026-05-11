@@ -321,7 +321,7 @@ class EarthquakesQueryParams(BaseModel):
 
     model_config = ConfigDict(extra="forbid", populate_by_name=True)
 
-    from_: str | None = Field(None, alias="from")
-    to: str | None = None
+    from_: datetime | None = Field(default=None, alias="from")
+    to: datetime | None = None
     min_magnitude: float | None = Field(None, ge=0)
     radius_km: float | None = Field(None, ge=0)
