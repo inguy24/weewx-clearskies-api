@@ -40,6 +40,7 @@ Startup sequence (ADR-012):
     6l. wire earthquakes settings — pass settings to earthquakes endpoint (default_radius_km).
     6m. wire forecast settings — pass settings to forecast endpoint (NWS UA).
     6n. wire radar — register configured radar provider's CAPABILITY in registry.
+    6o. wire radar settings — wire credentials for keyed radar providers (aeris, openweathermap).
     7. register DB probe      — health subsystem wired with SELECT 1 probe.
     8. start uvicorn          — public API + health app.
 """
@@ -70,6 +71,7 @@ from weewx_clearskies_api.endpoints.aqi import wire_aqi_settings
 from weewx_clearskies_api.endpoints.earthquakes import wire_earthquakes_settings
 from weewx_clearskies_api.endpoints.forecast import wire_forecast_settings
 from weewx_clearskies_api.endpoints.pages import wire_hidden_pages
+from weewx_clearskies_api.endpoints.radar import wire_radar_settings
 from weewx_clearskies_api.health import create_health_app
 from weewx_clearskies_api.logging.setup import setup_logging
 from weewx_clearskies_api.providers._common.cache import ConfigError as CacheConfigError
@@ -293,9 +295,10 @@ def _wire_providers_from_config(settings: Settings) -> None:
         declarations.append(module.CAPABILITY)
 
     # 3b-14: radar domain (keyless half — rainviewer, iem_nexrad, noaa_mrms,
-    # msc_geomet, dwd_radolan).  No wire_radar_settings() needed: provider id
-    # lives in the registry; no per-request settings (no filter params, no
-    # station lat/lon dependency for frame index).  Brief lead call 6.
+    # msc_geomet, dwd_radolan).
+    # 3b-15: keyed providers added (aeris, openweathermap).
+    # mapbox_jma deferred per ADR-015 2026-05-11 amendment.
+    # Credentials for keyed providers wired separately via wire_radar_settings().
     if settings.radar.provider:
         provider_id = settings.radar.provider
         try:
@@ -305,9 +308,10 @@ def _wire_providers_from_config(settings: Settings) -> None:
                 "FATAL: Unknown radar provider %r in api.conf — clearskies-api cannot start. "
                 "Cause: %s. "
                 "Check [radar] provider in api.conf. "
-                "Supported values (3b-14 keyless set): "
-                "rainviewer, iem_nexrad, noaa_mrms, msc_geomet, dwd_radolan. "
-                "Keyed providers (aeris, openweathermap, mapbox_jma) added in 3b-15.",
+                "Supported values: "
+                "rainviewer, iem_nexrad, noaa_mrms, msc_geomet, dwd_radolan (keyless); "
+                "aeris, openweathermap (keyed). "
+                "mapbox_jma is not supported — deferred per ADR-015 2026-05-11 amendment.",
                 provider_id,
                 exc,
             )
@@ -332,8 +336,7 @@ def main() -> None:
       6k. Wire aqi settings.
       6l. Wire earthquakes settings.
       6m. Wire forecast settings.
-      (6n is implicit in 6i for radar — CAPABILITY registered in _wire_providers_from_config;
-       no separate wire_radar_settings() per brief lead call 6.)
+      6o. Wire radar settings (keyed provider credentials — 3b-15; no-op for keyless).
       7. Register DB health probe.
       8. Start uvicorn.
     """
@@ -467,6 +470,12 @@ def main() -> None:
 
     # Step 6m: Pass settings to forecast endpoint (NWS UA contact wiring).
     wire_forecast_settings(settings)
+
+    # Step 6o: Pass settings to radar endpoint for keyed-provider credential wiring.
+    # Keyless providers (rainviewer, iem_nexrad, noaa_mrms, msc_geomet, dwd_radolan):
+    # no-op. Aeris + OWM: extracts credentials from settings.forecast per 3b-5 Q2
+    # provider-scoped decision (same env vars as forecast/alerts/AQI).
+    wire_radar_settings(settings)
 
     # Step 7: Register DB readiness probe.
     wire_db_health_probe()

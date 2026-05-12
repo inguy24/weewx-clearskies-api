@@ -113,6 +113,7 @@ class ProviderHTTPClient:
         url: str,
         params: dict[str, str] | None = None,
         headers: dict[str, str] | None = None,
+        log_url: str | None = None,
     ) -> httpx.Response:
         """Perform a GET with retry on transient errors.
 
@@ -124,7 +125,20 @@ class ProviderHTTPClient:
           - other 4xx → ProviderProtocolError (unexpected client-side error)
 
         No retries on 4xx — they are not transient.
+
+        Args:
+            url: The full URL to request.
+            params: Optional query-string parameters dict.
+            headers: Optional additional request headers.
+            log_url: When provided, used in place of `url` for all log
+                messages.  Use this when `url` embeds credentials in the
+                path (Aeris path-credential pattern) to prevent key leakage
+                in log output (LC-E, 3b-15).  Does NOT affect the actual
+                HTTP request — `url` is always the real URL sent to the server.
         """
+        # Resolved URL for logging — redacted when caller provides log_url.
+        _log_url = log_url if log_url is not None else url
+
         last_exc: Exception | None = None
         last_response: httpx.Response | None = None
 
@@ -139,7 +153,7 @@ class ProviderHTTPClient:
                     extra={
                         "provider_id": self.provider_id,
                         "domain": self.domain,
-                        "url": url,
+                        "url": _log_url,
                     },
                 )
                 time.sleep(delay)
@@ -199,11 +213,11 @@ class ProviderHTTPClient:
             logger.info(
                 "Provider HTTP %d %s",
                 status,
-                url,
+                _log_url,
                 extra={
                     "provider_id": self.provider_id,
                     "domain": self.domain,
-                    "url": url,
+                    "url": _log_url,
                     "status_code": status,
                     "elapsed_ms": elapsed_ms,
                 },
@@ -256,7 +270,7 @@ class ProviderHTTPClient:
                     extra={
                         "provider_id": self.provider_id,
                         "domain": self.domain,
-                        "url": url,
+                        "url": _log_url,
                         "status_code": status,
                         "body_excerpt": body_excerpt,
                     },

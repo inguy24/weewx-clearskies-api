@@ -463,22 +463,26 @@ class EarthquakesSettings:
 
 
 class RadarSettings:
-    """[radar] section settings (3b-14).
+    """[radar] section settings (3b-14; extended 3b-15 with 2 keyed providers).
 
-    Provider id for the radar data source.  All five day-1 providers (rainviewer,
-    iem_nexrad, noaa_mrms, msc_geomet, dwd_radolan) are keyless — no env vars
-    needed.  Keyed providers (aeris, openweathermap, mapbox_jma) added in 3b-15.
+    Provider id for the radar data source.  Five keyless providers (rainviewer,
+    iem_nexrad, noaa_mrms, msc_geomet, dwd_radolan) and two keyed providers
+    (aeris, openweathermap) per ADR-015.
+
+    Note: mapbox_jma is NOT included — deferred per ADR-015 2026-05-11 amendment
+    (Mapbox JMA tilesets are raster-array shape, GL-JS-only; incompatible with
+    Leaflet).
 
     Per ADR-015: single radar provider per deploy (operator picks one per
     their lat/lon).  Per-region auto-pick is a setup-wizard concern (out of scope).
 
-    No wire_radar_settings() needed (brief lead call 6): provider id lives in
-    the registry; no per-request settings (no filter params, no station lat/lon
-    needed for frame index).
+    Keyed provider credentials (aeris, openweathermap) are NOT stored here —
+    they are wired at startup via wire_radar_settings() in endpoints/radar.py,
+    which reads them from settings.forecast (provider-scoped per 3b-5 Q2).
     """
 
     #: Provider id: "rainviewer", "iem_nexrad", "noaa_mrms", "msc_geomet",
-    #: "dwd_radolan", or absent.  Keyed providers added in 3b-15.
+    #: "dwd_radolan", "aeris", "openweathermap", or absent.
     provider: str | None
 
     def __init__(self, section: dict[str, Any]) -> None:
@@ -487,13 +491,22 @@ class RadarSettings:
 
     def validate(self) -> None:
         """Raise ValueError on invalid provider id."""
-        valid_providers = {"rainviewer", "iem_nexrad", "noaa_mrms", "msc_geomet", "dwd_radolan"}
-        # Note: 3b-15 will extend this set with the keyed providers.
+        valid_providers = {
+            "rainviewer",
+            "iem_nexrad",
+            "noaa_mrms",
+            "msc_geomet",
+            "dwd_radolan",
+            "aeris",       # keyed — added 3b-15; credentials in settings.forecast
+            "openweathermap",  # keyed — added 3b-15; credentials in settings.forecast
+        }
+        # mapbox_jma is NOT valid — deferred per ADR-015 2026-05-11 amendment.
         if self.provider is not None and self.provider not in valid_providers:
             raise ValueError(
                 f"[radar] provider {self.provider!r} not in {valid_providers}. "
-                "Supported values for 3b-14 (more added in 3b-15): "
-                "'rainviewer', 'iem_nexrad', 'noaa_mrms', 'msc_geomet', 'dwd_radolan'."
+                "Supported values: 'rainviewer', 'iem_nexrad', 'noaa_mrms', "
+                "'msc_geomet', 'dwd_radolan' (keyless); "
+                "'aeris', 'openweathermap' (keyed; credentials in [forecast] section)."
             )
 
 
