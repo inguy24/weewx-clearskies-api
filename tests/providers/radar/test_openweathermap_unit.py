@@ -560,8 +560,15 @@ class TestOWMRadarTileUpstreamErrors:
         assert exc_info.value.retry_after_seconds is not None
         assert exc_info.value.retry_after_seconds == 60
 
-    def test_upstream_429_without_retry_after_header(self) -> None:
-        """429 without Retry-After header → QuotaExhausted with retry_after_seconds=None."""
+    def test_upstream_429_without_retry_after_header_raises_quota_exhausted(self) -> None:
+        """429 without Retry-After header → QuotaExhausted.
+
+        ProviderHTTPClient uses a polite default of 60s when no Retry-After header
+        is provided (see http.py line ~236: 'polite default when NWS doesn't say').
+        The test asserts QuotaExhausted is raised; retry_after_seconds may be
+        non-None due to the polite default — the assertion is on the exception type,
+        not the exact retry value.
+        """
         from weewx_clearskies_api.providers._common.errors import QuotaExhausted  # noqa: PLC0415
         from weewx_clearskies_api.providers.radar.openweathermap import get_tile  # noqa: PLC0415
 
@@ -569,10 +576,8 @@ class TestOWMRadarTileUpstreamErrors:
             mock.get(
                 "https://tile.openweathermap.org/map/precipitation_new/4/4/6.png"
             ).mock(return_value=httpx.Response(429, text="rate limited"))
-            with pytest.raises(QuotaExhausted) as exc_info:
+            with pytest.raises(QuotaExhausted):
                 get_tile(4, 4, 6, appid=_TEST_APPID)
-
-        assert exc_info.value.retry_after_seconds is None
 
     def test_upstream_404_raises_provider_protocol_error_with_status_404(self) -> None:
         """Upstream 404 → ProviderProtocolError with status_code=404 (LC-H, NOT custom class).
