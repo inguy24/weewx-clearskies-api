@@ -420,6 +420,108 @@ class TestPpbToPpm:
 
 
 # ===========================================================================
+# 3b. ppb_to_ugm3 — ppb → µg/m³ conversion (MW-based formula)
+# ===========================================================================
+
+
+class TestPpbToUgm3:
+    """ppb_to_ugm3 converts ppb to µg/m³ using formula: µg/m³ = ppb × MW / 24.45.
+
+    Inverse of ugm3_to_ppm × 1000 (since ppm = ppb / 1000).
+    Requires pollutant keyword arg — uses _MOLAR_WEIGHTS table.
+    Unknown pollutant → returns None (does not raise).
+    None input not accepted (ppb is float, not float|None — caller guards).
+    """
+
+    def test_o3_1000_ppb_converts_to_expected_ugm3(self) -> None:
+        """O3 1000 ppb → 1000 × 48.00 / 24.45 ≈ 1963.2 µg/m³."""
+        import math  # noqa: PLC0415
+
+        from weewx_clearskies_api.providers.aqi._units import ppb_to_ugm3  # noqa: PLC0415
+        result = ppb_to_ugm3(1000.0, pollutant="O3")
+        assert result is not None
+        expected = 1000.0 * 48.00 / 24.45
+        assert math.isclose(result, expected, rel_tol=1e-9), (
+            f"O3 1000 ppb → expected {expected:.4f} µg/m³, got {result!r}"
+        )
+
+    def test_no2_36_ppb_converts_to_expected_ugm3(self) -> None:
+        """NO2 36 ppb → 36 × 46.01 / 24.45 ≈ 67.74 µg/m³."""
+        import math  # noqa: PLC0415
+
+        from weewx_clearskies_api.providers.aqi._units import ppb_to_ugm3  # noqa: PLC0415
+        result = ppb_to_ugm3(36.0, pollutant="NO2")
+        assert result is not None
+        expected = 36.0 * 46.01 / 24.45
+        assert math.isclose(result, expected, rel_tol=1e-9), (
+            f"NO2 36 ppb → expected {expected:.4f} µg/m³, got {result!r}"
+        )
+
+    def test_so2_0_ppb_returns_zero(self) -> None:
+        """SO2 0 ppb → 0.0 µg/m³ (zero input stays zero)."""
+        from weewx_clearskies_api.providers.aqi._units import ppb_to_ugm3  # noqa: PLC0415
+        result = ppb_to_ugm3(0.0, pollutant="SO2")
+        assert result == 0.0, f"SO2 0 ppb → expected 0.0 µg/m³, got {result!r}"
+
+    def test_co_143_ppb_converts_to_expected_ugm3(self) -> None:
+        """CO 143 ppb → 143 × 28.01 / 24.45 ≈ 163.87 µg/m³."""
+        import math  # noqa: PLC0415
+
+        from weewx_clearskies_api.providers.aqi._units import ppb_to_ugm3  # noqa: PLC0415
+        result = ppb_to_ugm3(143.0, pollutant="CO")
+        assert result is not None
+        expected = 143.0 * 28.01 / 24.45
+        assert math.isclose(result, expected, rel_tol=1e-9), (
+            f"CO 143 ppb → expected {expected:.4f} µg/m³, got {result!r}"
+        )
+
+    def test_unknown_pollutant_returns_none(self) -> None:
+        """ppb_to_ugm3(100, pollutant='UNKNOWN') → None (not in MW table)."""
+        from weewx_clearskies_api.providers.aqi._units import ppb_to_ugm3  # noqa: PLC0415
+        result = ppb_to_ugm3(100.0, pollutant="UNKNOWN")
+        assert result is None, (
+            f"Unknown pollutant must return None, got {result!r}"
+        )
+
+    def test_pm25_not_in_table_returns_none(self) -> None:
+        """ppb_to_ugm3(1.0, pollutant='PM2.5') → None (particulates not in MW table)."""
+        from weewx_clearskies_api.providers.aqi._units import ppb_to_ugm3  # noqa: PLC0415
+        result = ppb_to_ugm3(1.0, pollutant="PM2.5")
+        assert result is None
+
+    def test_result_is_float_for_valid_input(self) -> None:
+        """Return type is float (not None) for a valid gas pollutant."""
+        from weewx_clearskies_api.providers.aqi._units import ppb_to_ugm3  # noqa: PLC0415
+        result = ppb_to_ugm3(50.0, pollutant="O3")
+        assert isinstance(result, float)
+
+    def test_doubling_ppb_doubles_ugm3(self) -> None:
+        """Linear formula: doubling ppb must double µg/m³."""
+        import math  # noqa: PLC0415
+
+        from weewx_clearskies_api.providers.aqi._units import ppb_to_ugm3  # noqa: PLC0415
+        r1 = ppb_to_ugm3(100.0, pollutant="NO2")
+        r2 = ppb_to_ugm3(200.0, pollutant="NO2")
+        assert r1 is not None and r2 is not None
+        assert math.isclose(r2, r1 * 2, rel_tol=1e-9)
+
+    def test_ppb_to_ugm3_is_inverse_of_ugm3_to_ppm_times_1000(self) -> None:
+        """Round-trip: ppb_to_ugm3(ugm3_to_ppm(c) × 1000) ≈ c for all supported gases."""
+        import math  # noqa: PLC0415
+
+        from weewx_clearskies_api.providers.aqi._units import ppb_to_ugm3, ugm3_to_ppm  # noqa: PLC0415
+        for pollutant, c_ugm3 in [("O3", 87.0), ("NO2", 100.0), ("SO2", 50.0), ("CO", 155.0)]:
+            ppm = ugm3_to_ppm(c_ugm3, pollutant=pollutant)
+            assert ppm is not None
+            ppb = ppm * 1000.0
+            result = ppb_to_ugm3(ppb, pollutant=pollutant)
+            assert result is not None
+            assert math.isclose(result, c_ugm3, rel_tol=1e-9), (
+                f"{pollutant}: round-trip failed — expected {c_ugm3}, got {result}"
+            )
+
+
+# ===========================================================================
 # 4. concentration_to_sub_aqi — EPA breakpoint per-pollutant tables (3b-11)
 # ===========================================================================
 #

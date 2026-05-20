@@ -310,14 +310,24 @@ class TestWireToCanonicalNashvilleHappyPath:
         assert result is not None
         assert result.aqi == 10, f"Expected aqi=10, got {result.aqi!r}"
 
-    def test_nashville_aqi_category_is_good(self) -> None:
-        """aqiCategory = 'Good' (AQI 10 → EPA 0–50 'Good' band via epa_category())."""
+    def test_nashville_aqi_scale_is_epa(self) -> None:
+        """aqiScale = 'epa' (aqius is EPA 0–500 native from IQAir)."""
         from weewx_clearskies_api.providers.aqi.iqair import _wire_to_canonical  # noqa: PLC0415
         data = self._get_data_from_fixture()
         result = _wire_to_canonical(data)
         assert result is not None
-        assert result.aqiCategory == "Good", (
-            f"Expected aqiCategory='Good' (AQI 10 → 0–50 band), got {result.aqiCategory!r}"
+        assert result.aqiScale == "epa", (
+            f"Expected aqiScale='epa', got {result.aqiScale!r}"
+        )
+
+    def test_nashville_aqi_category_is_none(self) -> None:
+        """aqiCategory = None (dashboard-computed; parsers set None)."""
+        from weewx_clearskies_api.providers.aqi.iqair import _wire_to_canonical  # noqa: PLC0415
+        data = self._get_data_from_fixture()
+        result = _wire_to_canonical(data)
+        assert result is not None
+        assert result.aqiCategory is None, (
+            f"Expected aqiCategory=None (dashboard-computed), got {result.aqiCategory!r}"
         )
 
     def test_nashville_aqi_main_pollutant_is_pm25(self) -> None:

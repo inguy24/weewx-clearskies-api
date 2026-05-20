@@ -12,19 +12,17 @@ Five responsibilities per ADR-038 §2:
      aqi/category/color/method/name, profile, loc, id).
   3. Translation to canonical AQIReading (_wire_to_canonical):
        - aqi from periods[0].aqi (rounded to int, capped at 500)
-       - aqiCategory derived client-side via epa_category(aqi) (LC13;
-         Aeris's periods[].category is lowercase with 'usg' abbreviation
-         — doesn't match canonical Title Case; deriving from the AQI value
-         ensures single source of truth shared with Open-Meteo)
+       - aqiScale = "epa" (Aeris /airquality?filter=airnow is EPA 0–500 native)
+       - aqiCategory = None (dashboard-computed from aqi+aqiScale)
        - aqiMainPollutant normalized from periods[0].dominant lowercase id
          to canonical id via _DOMINANT_TO_CANONICAL lookup (LC14)
        - aqiLocation from place.name (NOT PARTIAL-DOMAIN — Aeris supplies
          this; distinct from Open-Meteo which omits it)
        - pollutantPM25/PM10: periods[0].pollutants[] filtered by type,
          valueUGM3 passthrough in µg/m³ (LC15 + §4.2 aeris column)
-       - pollutantO3/NO2/SO2/CO: valuePPB converted via ppb_to_ppm()
-         (NOT ugm3_to_ppm — Aeris returns valuePPB directly; converting
-         via ugm3_to_ppm would be wrong since that path expects µg/m³ input)
+       - pollutantO3/NO2/SO2/CO: valuePPB converted via ppb_to_ugm3()
+         (formula: µg/m³ = ppb × MW / 24.45; Aeris returns valuePPB
+         directly for gases)
        - observedAt: periods[0].dateTimeISO parsed as explicit-offset ISO
          string → UTC Z form via to_utc_iso8601_from_offset() (LC4)
        - source = "aeris"
@@ -106,7 +104,7 @@ from weewx_clearskies_api.providers._common.errors import (
 )
 from weewx_clearskies_api.providers._common.http import ProviderHTTPClient
 from weewx_clearskies_api.providers._common.rate_limiter import RateLimiter
-from weewx_clearskies_api.providers.aqi._units import epa_category, ppb_to_ppm
+from weewx_clearskies_api.providers.aqi._units import ppb_to_ugm3
 
 logger = logging.getLogger(__name__)
 
@@ -146,12 +144,20 @@ _TYPE_TO_CANONICAL_FIELD: dict[str, str] = {
     # "pm1" intentionally omitted (LC26)
 }
 
-# Canonical fields that come from valuePPB (gases) need ppb_to_ppm() conversion.
+# Canonical fields that come from valuePPB (gases) need ppb_to_ugm3() conversion.
 # Particulate fields (pollutantPM25 / pollutantPM10) read valueUGM3 directly
 # via the unconditional else: branch in _wire_to_canonical's pollutant loop.
 _GAS_FIELDS: frozenset[str] = frozenset({
     "pollutantO3", "pollutantNO2", "pollutantSO2", "pollutantCO",
 })
+
+# Maps canonical gas field name to the canonical pollutant id used by ppb_to_ugm3.
+_GAS_FIELD_TO_POLLUTANT: dict[str, str] = {
+    "pollutantO3":  "O3",
+    "pollutantNO2": "NO2",
+    "pollutantSO2": "SO2",
+    "pollutantCO":  "CO",
+}
 
 # Aeris success=false error codes that indicate auth/credential failure (LC27).
 # Maps to KeyInvalid (permanent until operator updates config).
@@ -191,11 +197,9 @@ CAPABILITY = ProviderCapability(
         "Aeris (Xweather) /airquality endpoint with filter=airnow (US EPA AQI). "
         "Keyed (query-param client_id + client_secret; reuses provider-scoped "
         "credentials from forecast/alerts Aeris — same [aeris] config section). "
-        "Gas concentrations converted PPB→ppm via providers/aqi/_units.ppb_to_ppm "
-        "(NOT ugm3_to_ppm — Aeris returns valuePPB directly for O3/NO2/SO2/CO). "
-        "aqiCategory derived client-side via epa_category(aqi); Aeris's "
-        "periods[].category is lowercase with 'usg' abbreviation and does not "
-        "match canonical Title Case. "
+        "Gas concentrations converted PPB→µg/m³ via providers/aqi/_units.ppb_to_ugm3 "
+        "(formula: µg/m³ = ppb × MW / 24.45; Aeris returns valuePPB directly for O3/NO2/SO2/CO). "
+        "aqiScale='epa'; aqiCategory=None (dashboard-computed from aqi+aqiScale). "
         "aqiMainPollutant normalized from lowercase periods[].dominant to canonical id. "
         "pm1 dropped during translation (no pollutantPM1 field on canonical AQIReading). "
         "aqiLocation supplied via place.name (NOT PARTIAL-DOMAIN for Aeris)."
@@ -245,8 +249,6 @@ class _AerisPeriod(BaseModel):
     dominant: str | None = None  # lowercase pollutant id e.g. "pm2.5"
     pollutants: list[_AerisPollutant] = []
     # category, color, method, health, timestamp are present but not consumed.
-    # periods[].category is lowercase with 'usg' abbreviation — derive
-    # aqiCategory client-side via epa_category(aqi) instead (LC13).
 
 
 class _AerisLocation(BaseModel):
@@ -425,13 +427,6 @@ def _wire_to_canonical(location: _AerisLocation) -> AQIReading | None:
     if period.aqi is not None:
         aqi_int = min(round(period.aqi), 500)
 
-    # aqiCategory: derived client-side via EPA breakpoint table (LC13).
-    # Aeris's periods[].category is lowercase with 'usg' abbreviation
-    # ("good | moderate | usg | unhealthy | very unhealthy | hazardous").
-    # Using epa_category(aqi) keeps Aeris consistent with Open-Meteo and
-    # ensures category always matches the AQI value (single source of truth).
-    category = epa_category(aqi_int)
-
     # aqiMainPollutant: normalize Aeris lowercase dominant id to canonical (LC14).
     dominant_raw = period.dominant or ""
     main_pollutant = _DOMINANT_TO_CANONICAL.get(dominant_raw)
@@ -451,7 +446,7 @@ def _wire_to_canonical(location: _AerisLocation) -> AQIReading | None:
         aqi_location = location.place.name
 
     # Pollutant values: filter pollutants[] by type, extract the right value
-    # field, and convert PPB → ppm for gases (LC15 + LC16).
+    # field, and convert PPB → µg/m³ for gases (formula: µg/m³ = ppb × MW / 24.45).
     # pm1 and any unknown type are silently skipped (LC26 / _TYPE_TO_CANONICAL_FIELD).
     pollutant_values: dict[str, float | None] = {}
     for entry in period.pollutants:
@@ -460,10 +455,14 @@ def _wire_to_canonical(location: _AerisLocation) -> AQIReading | None:
             # pm1 or unknown type — skip silently (LC26).
             continue
         if canonical_field in _GAS_FIELDS:
-            # Gas: convert PPB → ppm.  NOT ugm3_to_ppm — Aeris returns valuePPB
-            # directly; valueUGM3 is also present for gases but compounding a
-            # µg/m³→ppm conversion on a PPB value would be wrong.
-            pollutant_values[canonical_field] = ppb_to_ppm(entry.valuePPB)
+            # Gas: convert PPB → µg/m³ via ppb_to_ugm3 (MW-based formula).
+            # Aeris returns valuePPB directly for gases; valueUGM3 is also present
+            # for gases but using it would skip the ppb→µg/m³ round-trip here.
+            pollutant_id = _GAS_FIELD_TO_POLLUTANT[canonical_field]
+            pollutant_values[canonical_field] = (
+                ppb_to_ugm3(entry.valuePPB, pollutant=pollutant_id)
+                if entry.valuePPB is not None else None
+            )
         else:
             # Particulate: valueUGM3 passthrough in µg/m³.
             pollutant_values[canonical_field] = entry.valueUGM3
@@ -488,7 +487,8 @@ def _wire_to_canonical(location: _AerisLocation) -> AQIReading | None:
 
     return AQIReading(
         aqi=aqi_int,
-        aqiCategory=category,
+        aqiScale="epa",
+        aqiCategory=None,
         aqiMainPollutant=main_pollutant,
         aqiLocation=aqi_location,
         pollutantPM25=pollutant_values.get("pollutantPM25"),

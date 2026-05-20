@@ -258,12 +258,20 @@ class TestAqiCurrentOpenMeteoRegistered:
             f"Expected aqi=73, got {body['data'].get('aqi')!r}"
         )
 
-    def test_openmeteo_registered_aqi_category_is_moderate(self) -> None:
-        """data.aqiCategory = 'Moderate' (73 → 51–100 band)."""
+    def test_openmeteo_registered_aqi_scale_is_epa(self) -> None:
+        """data.aqiScale = 'epa' (Open-Meteo us_aqi is EPA 0–500 native)."""
         response, _ = self._get_response_with_fixture()
         body = response.json()
-        assert body["data"]["aqiCategory"] == "Moderate", (
-            f"Expected aqiCategory='Moderate', got {body['data'].get('aqiCategory')!r}"
+        assert body["data"]["aqiScale"] == "epa", (
+            f"Expected aqiScale='epa', got {body['data'].get('aqiScale')!r}"
+        )
+
+    def test_openmeteo_registered_aqi_category_is_null(self) -> None:
+        """data.aqiCategory = null (dashboard-computed; parsers set None)."""
+        response, _ = self._get_response_with_fixture()
+        body = response.json()
+        assert body["data"]["aqiCategory"] is None, (
+            f"Expected aqiCategory=null (dashboard-computed), got {body['data'].get('aqiCategory')!r}"
         )
 
     def test_openmeteo_registered_aqi_main_pollutant_is_pm25(self) -> None:
@@ -657,12 +665,20 @@ class TestAqiCurrentAerisRegistered:
             f"Expected aqi=33, got {body['data'].get('aqi')!r}"
         )
 
-    def test_aeris_registered_aqi_category_is_good(self) -> None:
-        """data.aqiCategory = 'Good' (AQI 33 → 0–50 band)."""
+    def test_aeris_registered_aqi_scale_is_epa(self) -> None:
+        """data.aqiScale = 'epa' (Aeris airnow filter is EPA native)."""
         response, _ = self._get_aeris_response()
         body = response.json()
-        assert body["data"]["aqiCategory"] == "Good", (
-            f"Expected aqiCategory='Good', got {body['data'].get('aqiCategory')!r}"
+        assert body["data"]["aqiScale"] == "epa", (
+            f"Expected aqiScale='epa', got {body['data'].get('aqiScale')!r}"
+        )
+
+    def test_aeris_registered_aqi_category_is_null(self) -> None:
+        """data.aqiCategory = null (dashboard-computed; parsers set None)."""
+        response, _ = self._get_aeris_response()
+        body = response.json()
+        assert body["data"]["aqiCategory"] is None, (
+            f"Expected aqiCategory=null (dashboard-computed), got {body['data'].get('aqiCategory')!r}"
         )
 
     def test_aeris_registered_aqi_location_is_seattle(self) -> None:
@@ -915,28 +931,36 @@ class TestAqiCurrentOpenWeatherMapRegistered:
             f"data must be a dict (AQIReading), got {type(data).__name__!r}"
         )
 
-    def test_owm_registered_aqi_value_is_31(self) -> None:
-        """data.aqi = 31 (from fixture; O3 sub-AQI; OWM main.aqi ignored; chemistry-corrected 2026-05-11)."""
+    def test_owm_registered_aqi_value_is_owm_ordinal_2(self) -> None:
+        """data.aqi = 2 (OWM main.aqi ordinal from fixture, served as-is)."""
         response, _ = self._get_owm_response()
         body = response.json()
-        assert body["data"]["aqi"] == 31, (
-            f"Expected aqi=31 (O3 sub-AQI from corrected chemistry), got {body['data'].get('aqi')!r}"
+        assert body["data"]["aqi"] == 2, (
+            f"Expected aqi=2 (OWM main.aqi ordinal from fixture), got {body['data'].get('aqi')!r}"
         )
 
-    def test_owm_registered_aqi_category_is_good(self) -> None:
-        """data.aqiCategory = 'Good' (AQI 31 → 0–50 band; chemistry-corrected 2026-05-11)."""
+    def test_owm_registered_aqi_scale_is_owm(self) -> None:
+        """data.aqiScale = 'owm' (OWM 1–5 ordinal scale)."""
         response, _ = self._get_owm_response()
         body = response.json()
-        assert body["data"]["aqiCategory"] == "Good", (
-            f"Expected aqiCategory='Good', got {body['data'].get('aqiCategory')!r}"
+        assert body["data"]["aqiScale"] == "owm", (
+            f"Expected aqiScale='owm', got {body['data'].get('aqiScale')!r}"
         )
 
-    def test_owm_registered_aqi_main_pollutant_is_o3(self) -> None:
-        """data.aqiMainPollutant = 'O3' (argmax of sub-AQIs from fixture; chemistry-corrected 2026-05-11)."""
+    def test_owm_registered_aqi_category_is_null(self) -> None:
+        """data.aqiCategory = null (dashboard-computed; parsers set None)."""
         response, _ = self._get_owm_response()
         body = response.json()
-        assert body["data"]["aqiMainPollutant"] == "O3", (
-            f"Expected aqiMainPollutant='O3', got {body['data'].get('aqiMainPollutant')!r}"
+        assert body["data"]["aqiCategory"] is None, (
+            f"Expected aqiCategory=null (dashboard-computed), got {body['data'].get('aqiCategory')!r}"
+        )
+
+    def test_owm_registered_aqi_main_pollutant_is_null(self) -> None:
+        """data.aqiMainPollutant = null (OWM Air Pollution does not supply dominant pollutant)."""
+        response, _ = self._get_owm_response()
+        body = response.json()
+        assert body["data"]["aqiMainPollutant"] is None, (
+            f"Expected aqiMainPollutant=null (not supplied by OWM), got {body['data'].get('aqiMainPollutant')!r}"
         )
 
     def test_owm_registered_aqi_location_is_null(self) -> None:

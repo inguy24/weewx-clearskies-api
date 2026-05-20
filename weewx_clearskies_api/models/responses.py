@@ -697,7 +697,8 @@ class AlertListResponse(BaseModel):
 class AQIReading(BaseModel):
     """Canonical AQI reading (ADR-010 §3.8, OpenAPI AQIReading schema).
 
-    EPA 0–500 scale per ADR-013.
+    Raw provider data — no EPA conversion at ingest. The dashboard applies
+    any display-scale conversion using aqiScale as the discriminator.
     extra="ignore" so provider wire shapes that have extra fields don't break
     normalization.  Required fields per OpenAPI: observedAt, source.
     All AQI numeric fields are Optional — providers may not supply all.
@@ -706,15 +707,16 @@ class AQIReading(BaseModel):
     model_config = ConfigDict(extra="ignore")
 
     aqi: float | None = None
-    aqiCategory: str | None = None      # EPA category — canonical §3.8 spelling
+    aqiScale: str | None = None          # scale the aqi value is on: "epa" (0-500), "owm" (1-5), etc.
+    aqiCategory: str | None = None       # dashboard-computed from aqi+aqiScale; parsers set None
     aqiMainPollutant: str | None = None  # canonical pollutant id: PM2.5/PM10/O3/NO2/SO2/CO
     aqiLocation: str | None = None       # free-form provider location label (PARTIAL-DOMAIN for Open-Meteo)
     pollutantPM25: float | None = None   # µg/m³ (group_concentration)
     pollutantPM10: float | None = None   # µg/m³ (group_concentration)
-    pollutantO3: float | None = None     # ppm (group_fraction; converted from µg/m³ at ingest)
-    pollutantNO2: float | None = None    # ppm (group_fraction; converted from µg/m³ at ingest)
-    pollutantSO2: float | None = None    # ppm (group_fraction; converted from µg/m³ at ingest)
-    pollutantCO: float | None = None     # ppm (group_fraction; converted from µg/m³ at ingest)
+    pollutantO3: float | None = None     # µg/m³ (group_concentration; raw provider value)
+    pollutantNO2: float | None = None    # µg/m³ (group_concentration; raw provider value)
+    pollutantSO2: float | None = None    # µg/m³ (group_concentration; raw provider value)
+    pollutantCO: float | None = None     # µg/m³ (group_concentration; raw provider value)
     observedAt: str                      # UTC ISO-8601 with Z; required per OpenAPI
     source: str                          # "weewx" (Path A) or provider_id (Path B)
 

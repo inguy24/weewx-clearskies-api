@@ -114,10 +114,10 @@ _GROUP_MEMBERS: Final[dict[str, list[str]]] = {
     "group_degree_day": ["cooldeg", "heatdeg", "growdeg"],
     "group_concentration": [
         "pollutantPM25", "pollutantPM10",
+        "pollutantO3", "pollutantNO2", "pollutantSO2", "pollutantCO",
         "pm1_0", "pm2_5", "pm10_0", "no2",
     ],
     "group_fraction": [
-        "pollutantO3", "pollutantSO2", "pollutantCO", "pollutantNO2",
         "co", "co2", "nh3", "o3", "pb", "so2",
     ],
     "group_illuminance": ["illuminance"],

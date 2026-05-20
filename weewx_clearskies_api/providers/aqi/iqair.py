@@ -14,8 +14,8 @@ Five responsibilities per ADR-038 §2:
   3. Translation to canonical AQIReading (_wire_to_canonical):
        - aqi from data.current.pollution.aqius (US EPA 0-500; NO conversion needed;
          distinct from OWM 1-5 ordinal + Open-Meteo sub-AQI computation paths)
-       - aqiCategory derived client-side via epa_category(aqi) (LC1 single-SOT;
-         same pattern as Aeris/OWM/Open-Meteo)
+       - aqiScale = "epa" (aqius is EPA 0–500 native from provider)
+       - aqiCategory = None (dashboard-computed from aqi+aqiScale)
        - aqiMainPollutant normalized from mainus code to canonical id via
          _MAINUS_TO_CANONICAL lookup (LC2; mirrors Aeris _DOMINANT_TO_CANONICAL)
        - aqiLocation = f"{data.city}, {data.state}" (LC4 / Q3 user decision
@@ -95,7 +95,6 @@ from weewx_clearskies_api.providers._common.errors import (
 )
 from weewx_clearskies_api.providers._common.http import ProviderHTTPClient
 from weewx_clearskies_api.providers._common.rate_limiter import RateLimiter
-from weewx_clearskies_api.providers.aqi._units import epa_category
 
 logger = logging.getLogger(__name__)
 
@@ -176,7 +175,7 @@ CAPABILITY = ProviderCapability(
         "With 15-min TTL → ~96 calls/day, well within 500/day + 10000/month caps. "
         "aqius (US EPA AQI 0-500) is published directly; no breakpoint computation needed "
         "(distinct from OWM 1-5 ordinal and Open-Meteo sub-AQI computation paths). "
-        "aqiCategory derived client-side via epa_category(aqi) (single SOT, LC1). "
+        "aqiScale='epa'; aqiCategory=None (dashboard-computed from aqi+aqiScale). "
         "aqiMainPollutant from mainus code via _MAINUS_TO_CANONICAL lookup "
         "(p1=PM10, p2=PM2.5, n2=NO2, o3=O3, s2=SO2, co=CO; "
         "p1/p2/n2 confirmed, o3/s2/co inferred — real-capture should verify). "
@@ -397,11 +396,6 @@ def _wire_to_canonical(data: _IQAirData) -> AQIReading | None:
     if aqi_val is None:
         return None
 
-    # aqiCategory: derived client-side via EPA breakpoint table (LC1).
-    # Single SOT — same epa_category() call as Aeris, OWM, Open-Meteo.
-    # mainus is a pollutant code, NOT a category label (canonical §4.2 F1 fix).
-    category = epa_category(aqi_val)
-
     # aqiMainPollutant: normalize mainus code to canonical id (LC2).
     # Unknown codes → None + logger.info notice (LC3; mirrors Aeris pm1 handling).
     main_pollutant: str | None = None
@@ -439,7 +433,8 @@ def _wire_to_canonical(data: _IQAirData) -> AQIReading | None:
 
     return AQIReading(
         aqi=aqi_val,
-        aqiCategory=category,
+        aqiScale="epa",
+        aqiCategory=None,
         aqiMainPollutant=main_pollutant,
         aqiLocation=aqi_location,
         pollutantPM25=None,   # LC5 — PARTIAL-DOMAIN free Community tier

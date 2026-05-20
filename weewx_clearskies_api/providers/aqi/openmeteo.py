@@ -9,11 +9,11 @@ Five responsibilities per ADR-038 §2:
      and _OpenMeteoAQResponse with extra="ignore" (LC5).
   3. Translation to canonical AQIReading (_wire_to_canonical):
        - aqi from current.us_aqi (rounded to int, capped at 500)
-       - aqiCategory via _units.epa_category()
+       - aqiScale = "epa" (us_aqi is EPA 0–500 native from provider)
+       - aqiCategory = None (dashboard-computed from aqi+aqiScale)
        - aqiMainPollutant via argmax of 6 sub-AQI sub-fields (LC14)
        - aqiLocation always None (PARTIAL-DOMAIN per LC12 + L1 rule)
-       - pollutantPM25/PM10 pass through as µg/m³ (group_concentration)
-       - pollutantO3/NO2/SO2/CO converted µg/m³→ppm via _units.ugm3_to_ppm
+       - pollutantPM25/PM10/O3/NO2/SO2/CO pass through as µg/m³ (raw provider values)
        - observedAt = current.time + "Z" (LC4 — timezone=GMT, no double-shift)
        - source = "openmeteo"
   4. Capability declaration — CAPABILITY symbol consumed at startup.
@@ -69,7 +69,6 @@ from weewx_clearskies_api.providers._common.capability import ProviderCapability
 from weewx_clearskies_api.providers._common.errors import ProviderProtocolError
 from weewx_clearskies_api.providers._common.http import ProviderHTTPClient
 from weewx_clearskies_api.providers._common.rate_limiter import RateLimiter
-from weewx_clearskies_api.providers.aqi._units import epa_category, ugm3_to_ppm
 
 logger = logging.getLogger(__name__)
 
@@ -128,10 +127,11 @@ CAPABILITY = ProviderCapability(
         "Global Atmospheric Composition (rest of world). "
         "aqiLocation is not supplied by this provider (PARTIAL-DOMAIN per "
         "canonical §4.2 openmeteo column); always null on canonical bundle. "
-        "aqiCategory + aqiMainPollutant are derived client-side from us_aqi "
-        "and per-pollutant sub-AQIs respectively (provider does not supply "
-        "either field directly). Per-gas concentrations converted µg/m³→ppm "
-        "via providers/aqi/_units.py."
+        "aqiScale='epa' (us_aqi is EPA 0–500 native). aqiCategory=None — "
+        "dashboard-computed from aqi+aqiScale. aqiMainPollutant derived "
+        "client-side from per-pollutant sub-AQIs (provider does not supply "
+        "either field directly). Per-gas concentrations passed through as "
+        "µg/m³ (raw provider values; no conversion at ingest)."
     ),
 )
 
@@ -161,7 +161,7 @@ class _OpenMeteoCurrentBlock(BaseModel):
     us_aqi_sulphur_dioxide: float | None = None
     us_aqi_carbon_monoxide: float | None = None
 
-    # Per-pollutant concentrations (µg/m³ — converted to ppm for gas species)
+    # Per-pollutant concentrations (µg/m³ — passed through as-is)
     pm2_5: float | None = None
     pm10: float | None = None
     ozone: float | None = None
@@ -226,7 +226,6 @@ def _build_cache_key(lat: float, lon: float) -> str:
     """Build a deterministic SHA-256 cache key for (provider_id, endpoint, {lat4, lon4}).
 
     No target_unit dimension — AQI has no unit conversion at request time.
-    Pollutant unit conversion (µg/m³→ppm) happens inside the module.
     Lat/lon rounded to 4 decimal places per ADR-017 §Cache key.
     Logical endpoint key "aqi_current" distinct from any other module's key.
     """
@@ -283,15 +282,16 @@ def _wire_to_canonical(wire: _OpenMeteoAQResponse) -> AQIReading | None:
 
     Otherwise constructs the canonical record per canonical §4.2:
       - aqi:               current.us_aqi (rounded to int if non-None; capped at 500)
-      - aqiCategory:       epa_category(aqi)
+      - aqiScale:          "epa" (Open-Meteo us_aqi is EPA 0–500 native)
+      - aqiCategory:       None (dashboard-computed from aqi+aqiScale)
       - aqiMainPollutant:  argmax of sub-AQIs → canonical pollutant id (LC14)
       - aqiLocation:       None (PARTIAL-DOMAIN per LC12 / L1 rule)
       - pollutantPM25:     current.pm2_5 (µg/m³ — passthrough, group_concentration)
       - pollutantPM10:     current.pm10  (µg/m³ — passthrough, group_concentration)
-      - pollutantO3:       ugm3_to_ppm(current.ozone, pollutant="O3")   (LC15)
-      - pollutantNO2:      ugm3_to_ppm(current.nitrogen_dioxide, "NO2") (LC15 + Q3)
-      - pollutantSO2:      ugm3_to_ppm(current.sulphur_dioxide, "SO2")  (LC15 + Q3)
-      - pollutantCO:       ugm3_to_ppm(current.carbon_monoxide, "CO")   (LC15)
+      - pollutantO3:       current.ozone          (µg/m³ — raw provider value)
+      - pollutantNO2:      current.nitrogen_dioxide (µg/m³ — raw provider value)
+      - pollutantSO2:      current.sulphur_dioxide  (µg/m³ — raw provider value)
+      - pollutantCO:       current.carbon_monoxide  (µg/m³ — raw provider value)
       - observedAt:        current.time + "Z" → UTC ISO-8601 (LC4)
       - source:            "openmeteo" (LC16)
     """
@@ -317,9 +317,6 @@ def _wire_to_canonical(wire: _OpenMeteoAQResponse) -> AQIReading | None:
     if aqi_raw is not None:
         aqi_int = min(round(aqi_raw), 500)
 
-    # aqiCategory: derived via EPA breakpoint table
-    category = epa_category(aqi_int)
-
     # aqiMainPollutant: argmax of sub-AQIs (None if all sub-AQIs are null)
     main_pollutant = _main_pollutant_from_sub_aqis(current)
 
@@ -331,15 +328,16 @@ def _wire_to_canonical(wire: _OpenMeteoAQResponse) -> AQIReading | None:
 
     return AQIReading(
         aqi=aqi_int,
-        aqiCategory=category,
+        aqiScale="epa",
+        aqiCategory=None,
         aqiMainPollutant=main_pollutant,
         aqiLocation=None,          # PARTIAL-DOMAIN — Open-Meteo has no location field
         pollutantPM25=current.pm2_5,
         pollutantPM10=current.pm10,
-        pollutantO3=ugm3_to_ppm(current.ozone, pollutant="O3"),
-        pollutantNO2=ugm3_to_ppm(current.nitrogen_dioxide, pollutant="NO2"),
-        pollutantSO2=ugm3_to_ppm(current.sulphur_dioxide, pollutant="SO2"),
-        pollutantCO=ugm3_to_ppm(current.carbon_monoxide, pollutant="CO"),
+        pollutantO3=current.ozone,
+        pollutantNO2=current.nitrogen_dioxide,
+        pollutantSO2=current.sulphur_dioxide,
+        pollutantCO=current.carbon_monoxide,
         observedAt=observed_at,
         source=PROVIDER_ID,
     )

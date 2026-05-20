@@ -15,16 +15,12 @@ Five responsibilities per ADR-038 §2:
        _OWMAirPollutionResponse — list: list[_OWMAirPollutionEntry] (shadows Python
          builtin; uses Field(default_factory=list) per LC11)
   3. Translation to canonical AQIReading (_wire_to_canonical):
-       - aqi = max EPA sub-AQI across 6 pollutants via concentration_to_sub_aqi()
-         (computed client-side; OWM main.aqi 1–5 ordinal is IGNORED per LC4)
-       - aqiCategory derived client-side via epa_category(aqi) (LC13; single SOT
-         shared with aeris.py + openmeteo.py)
-       - aqiMainPollutant = argmax of the 6 EPA sub-AQIs; deterministic table-order
-         tie-break: PM2.5 > PM10 > O3 > NO2 > SO2 > CO (mirrors openmeteo.py LC14)
+       - aqi = main.aqi (OWM's native 1–5 ordinal; served as-is)
+       - aqiScale = "owm" (1–5 ordinal scale, not EPA 0–500)
+       - aqiCategory = None (dashboard-computed from aqi+aqiScale)
+       - aqiMainPollutant = None (OWM Air Pollution does not supply dominant pollutant)
        - aqiLocation = None (PARTIAL-DOMAIN per LC12 — no location label at any tier)
-       - pollutantPM25/PM10: passthrough µg/m³ (group_concentration)
-       - pollutantO3/NO2/SO2/CO: ugm3_to_ppm(components.*) in ppm (group_fraction)
-         NOTE: NOT ppb_to_ppm — OWM returns µg/m³ for ALL pollutants including gases
+       - pollutantPM25/PM10/O3/NO2/SO2/CO: raw µg/m³ from components (no conversion)
        - observedAt: epoch_to_utc_iso8601(entry.dt) — shared helper (DRY per LC17)
        - source = "openweathermap"
        - NH3 and NO dropped unconditionally (no EPA AQI band; not on canonical — LC16)
@@ -57,24 +53,14 @@ Cache layer (ADR-017 / LC3 / LC6 / LC7):
     components (cached so re-polls within TTL skip the provider).
   Reconstruction on hit: AQIReading.model_validate(cached_dict).
 
-OWM main.aqi (1–5) field (LC4):
-  Declared in _OWMAirPollutionMain so the wire model validates cleanly.
-  NOT read in translation — canonical aqi is derived from concentrations via
-  EPA breakpoints (_compute_owm_aqi_max + concentration_to_sub_aqi in _units.py).
-  Operators expecting main.aqi to flow through should be aware: the canonical
-  AQI value follows the US EPA 0–500 scale, not OWM's 1–5 ordinal.
+OWM main.aqi (1–5) field:
+  Served as-is as the canonical aqi value with aqiScale="owm".
+  The dashboard converts to the operator's preferred display scale.
 
 NH3 / NO handling (LC16):
   Both present on wire (nh3, no in components).  Neither has an EPA AQI band.
   Neither appears on canonical AQIReading.  Silently dropped during translation.
   Mirrors aeris.py dropping pm1.
-
-Averaging-period limitation (Q1 user decision 2026-05-10, Option A):
-  O3 sub-AQI capped at 300 (8-hr table; above 0.200 ppm).
-  SO2 sub-AQI capped at 200 (1-hr table; above 0.304 ppm).
-  OWM returns an instantaneous snapshot that doesn't carry averaging-period info.
-  Applying the full upper-table breakpoints would manufacture precision the wire
-  shape cannot support.  Conservative posture matches AirNow/IQAir/AccuWeather.
 
 Rate limiter (LC8):
   max_calls=5, window_seconds=1 (be-polite guard; 15-min TTL → ~96 calls/day,
@@ -104,11 +90,6 @@ from weewx_clearskies_api.providers._common.errors import (
 )
 from weewx_clearskies_api.providers._common.http import ProviderHTTPClient
 from weewx_clearskies_api.providers._common.rate_limiter import RateLimiter
-from weewx_clearskies_api.providers.aqi._units import (
-    concentration_to_sub_aqi,
-    epa_category,
-    ugm3_to_ppm,
-)
 
 logger = logging.getLogger(__name__)
 
@@ -123,19 +104,6 @@ _API_VERSION = "0.1.0"
 OWM_AIRPOL_BASE_URL = "https://api.openweathermap.org"
 OWM_AIRPOL_PATH = "/data/2.5/air_pollution"
 
-# Sub-AQI field order for argmax + canonical pollutant id (LC14).
-# Deterministic table-order tie-break: PM2.5 wins over PM10, then O3, NO2, SO2, CO.
-# Mirrors openmeteo.py's _SUB_AQI_TO_POLLUTANT pattern for consistency.
-# Each tuple: (components_field_name, canonical_pollutant_id, canonical_aqi_field_unit)
-# where unit is "ugm3" for PM2.5/PM10 or "ppm" for gases (post-conversion).
-_POLLUTANT_ORDER: list[tuple[str, str, str]] = [
-    ("pm2_5",  "PM2.5", "ugm3"),
-    ("pm10",   "PM10",  "ugm3"),
-    ("o3",     "O3",    "ppm"),
-    ("no2",    "NO2",   "ppm"),
-    ("so2",    "SO2",   "ppm"),
-    ("co",     "CO",    "ppm"),
-]
 
 # ---------------------------------------------------------------------------
 # Capability declaration (ADR-038 §4)
@@ -163,18 +131,13 @@ CAPABILITY = ProviderCapability(
         "Keyed (query-param appid); reuses provider-scoped credential from "
         "forecast/alerts OWM — same WEEWX_CLEARSKIES_OPENWEATHERMAP_APPID env var "
         "per 3b-5 Q2 user decision. "
-        "OWM main.aqi (1–5 ordinal) is IGNORED — canonical aqi is derived from "
-        "concentrations via EPA piecewise-linear breakpoints (concentration_to_sub_aqi "
-        "in providers/aqi/_units.py). This produces an EPA 0–500 value; max across 6 "
-        "pollutants is taken. "
+        "OWM main.aqi (1–5 ordinal) is served as-is with aqiScale='owm'. "
+        "The dashboard converts to the operator's preferred display scale. "
+        "aqiCategory=None (dashboard-computed). aqiMainPollutant=None "
+        "(OWM Air Pollution does not supply a dominant pollutant field). "
         "aqiLocation is PARTIAL-DOMAIN (no location label on wire at any tier). "
         "NH3 and NO are dropped (no EPA AQI band; not on canonical AQIReading). "
-        "Gas pollutants (O3, NO2, SO2, CO) are returned by OWM in µg/m³ and converted "
-        "to ppm via ugm3_to_ppm for canonical storage (group_fraction). "
-        "Averaging-period limitation (Q1 user decision 2026-05-10, Option A): "
-        "O3 sub-AQI capped at 300 (8-hr table); SO2 sub-AQI capped at 200 (1-hr "
-        "table). OWM returns an instantaneous snapshot; applying upper-table breakpoints "
-        "would manufacture precision the wire shape cannot support."
+        "Gas pollutants (O3, NO2, SO2, CO) passed through as µg/m³ (raw provider values)."
     ),
 )
 
@@ -207,15 +170,12 @@ class _OWMAirPollutionMain(BaseModel):
     """main object inside each list[] entry (LC5).
 
     aqi is the OWM 1–5 ordinal scale (1=Good, 5=Very Poor).
-    Declared here so the wire model validates cleanly.
-    NOT read in translation — canonical aqi is derived from concentrations
-    via EPA breakpoints (LC4).  Operators expecting OWM's ordinal to flow
-    through should note that the canonical AQI is EPA 0–500.
+    Served as-is as the canonical aqi value with aqiScale="owm".
     """
 
     model_config = ConfigDict(extra="ignore")
 
-    aqi: int | None = None  # OWM 1–5 ordinal; IGNORED per LC4
+    aqi: int | None = None  # OWM 1–5 ordinal; served as-is with aqiScale="owm"
 
 
 class _OWMAirPollutionEntry(BaseModel):
@@ -314,100 +274,32 @@ def _build_cache_key(lat: float, lon: float) -> str:
 # ---------------------------------------------------------------------------
 
 
-def _compute_owm_aqi_max(
-    components: _OWMAirPollutionComponents,
-) -> tuple[int | None, str | None]:
-    """Compute the EPA-methodology overall AQI and dominant pollutant from OWM components.
-
-    Derives each pollutant's EPA sub-AQI via concentration_to_sub_aqi() in _units.py,
-    then takes the maximum.  Returns (aqi, main_pollutant) where aqi is the max sub-AQI
-    (capped at 500) and main_pollutant is the canonical pollutant id of the argmax.
-
-    Deterministic table-order tie-break per LC14 (mirrors openmeteo.py pattern):
-    PM2.5 > PM10 > O3 > NO2 > SO2 > CO.  Strict > on sub-AQI value so the first
-    maximum in table order wins ties.
-
-    Gas pollutants (O3, NO2, SO2, CO) must be converted µg/m³ → ppm before the
-    breakpoint lookup; ugm3_to_ppm() handles this.  PM2.5/PM10 pass through as
-    µg/m³ directly (group_concentration).
-
-    NH3 and NO are not in the EPA AQI methodology and are silently skipped (LC16).
-
-    Returns:
-        (aqi, main_pollutant) — both may be None if all six component values are None.
-    """
-    best_sub_aqi: int | None = None
-    best_pollutant: str | None = None
-
-    for field_name, canonical_id, unit in _POLLUTANT_ORDER:
-        raw = getattr(components, field_name, None)
-        if raw is None:
-            continue
-
-        # Convert gas pollutants µg/m³ → ppm for the breakpoint lookup.
-        # ugm3_to_ppm raises KeyError for unsupported pollutants, but _POLLUTANT_ORDER
-        # only lists supported ones ("O3", "NO2", "SO2", "CO").
-        conc_in_canonical_units = (
-            ugm3_to_ppm(raw, pollutant=canonical_id) if unit == "ppm" else raw
-        )
-
-        sub = concentration_to_sub_aqi(conc_in_canonical_units, pollutant=canonical_id)
-        if sub is None:
-            continue
-
-        # Strict > so the FIRST maximum wins (table-order tie-breaking per LC14).
-        if best_sub_aqi is None or sub > best_sub_aqi:
-            best_sub_aqi = sub
-            best_pollutant = canonical_id
-
-    if best_sub_aqi is None:
-        return None, None
-
-    # Cap at 500 (defensive; EPA scale is 0-500; concentration_to_sub_aqi already
-    # caps at the table top for O3/SO2, but other pollutants are 0-500 full range).
-    return min(best_sub_aqi, 500), best_pollutant
-
-
 def _wire_to_canonical(entry: _OWMAirPollutionEntry) -> AQIReading | None:
     """Translate OWM list[0] entry to canonical AQIReading.
 
-    Returns None if aqi AND all pollutant values are null (no useful reading).
+    Returns None if main.aqi AND all component values are null (no useful reading).
 
-    Per LC4: OWM main.aqi (1–5 ordinal) is IGNORED.  The canonical aqi is
-    computed client-side from concentrations via EPA breakpoints.
+    OWM main.aqi (1–5 ordinal) is used directly as the canonical aqi value with
+    aqiScale="owm".  The dashboard applies any display-scale conversion.
 
     Per LC16: NH3 (nh3) and NO (no) are silently dropped — they have no EPA
     AQI band and no slot on canonical AQIReading.
     """
     components = entry.components
 
-    # Compute EPA AQI from concentrations (LC4 — ignores main.aqi entirely).
-    aqi_int, main_pollutant = _compute_owm_aqi_max(components)
-
-    # Convert gas concentrations µg/m³ → ppm for canonical storage.
-    # NOTE: conversion happens INDEPENDENTLY of the sub-AQI computation above —
-    # _compute_owm_aqi_max converts internally for the breakpoint lookup, but
-    # those results are sub-AQI integers.  These conversions produce the ppm
-    # floats that go on the canonical record (group_fraction).
-    pollutant_o3 = ugm3_to_ppm(components.o3, pollutant="O3")
-    pollutant_no2 = ugm3_to_ppm(components.no2, pollutant="NO2")
-    pollutant_so2 = ugm3_to_ppm(components.so2, pollutant="SO2")
-    pollutant_co = ugm3_to_ppm(components.co, pollutant="CO")
+    # aqi: OWM's native 1–5 ordinal (main.aqi).
+    aqi_val: int | None = entry.main.aqi
 
     # Empty-result guard: return None if aqi AND all canonical pollutant values are null.
-    # Uses the computed aqi_int AND the canonical pollutant fields (LC26 pattern).
-    has_data = aqi_int is not None or any(
+    has_data = aqi_val is not None or any(
         v is not None
         for v in (
             components.pm2_5, components.pm10,
-            pollutant_o3, pollutant_no2, pollutant_so2, pollutant_co,
+            components.o3, components.no2, components.so2, components.co,
         )
     )
     if not has_data:
         return None
-
-    # aqiCategory: derived client-side (LC13 — single SOT shared with aeris + openmeteo).
-    category = epa_category(aqi_int)
 
     # observedAt: Unix UTC epoch → ISO-8601 Z via shared helper (LC17 / DRY).
     observed_at = epoch_to_utc_iso8601(
@@ -417,16 +309,17 @@ def _wire_to_canonical(entry: _OWMAirPollutionEntry) -> AQIReading | None:
     )
 
     return AQIReading(
-        aqi=aqi_int,
-        aqiCategory=category,
-        aqiMainPollutant=main_pollutant,
+        aqi=aqi_val,
+        aqiScale="owm",
+        aqiCategory=None,
+        aqiMainPollutant=None,          # OWM Air Pollution does not supply dominant pollutant
         aqiLocation=None,               # PARTIAL-DOMAIN — no location label at any tier (LC12)
         pollutantPM25=components.pm2_5,  # µg/m³ passthrough (group_concentration)
         pollutantPM10=components.pm10,   # µg/m³ passthrough (group_concentration)
-        pollutantO3=pollutant_o3,        # ppm (group_fraction after ugm3_to_ppm)
-        pollutantNO2=pollutant_no2,      # ppm (group_fraction after ugm3_to_ppm)
-        pollutantSO2=pollutant_so2,      # ppm (group_fraction after ugm3_to_ppm)
-        pollutantCO=pollutant_co,        # ppm (group_fraction after ugm3_to_ppm)
+        pollutantO3=components.o3,       # µg/m³ raw provider value
+        pollutantNO2=components.no2,     # µg/m³ raw provider value
+        pollutantSO2=components.so2,     # µg/m³ raw provider value
+        pollutantCO=components.co,       # µg/m³ raw provider value
         observedAt=observed_at,
         source=PROVIDER_ID,
     )

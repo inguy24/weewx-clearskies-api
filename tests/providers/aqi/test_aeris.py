@@ -209,14 +209,24 @@ class TestWireToCanonicalHappyPath:
         assert result is not None
         assert result.aqi == 33, f"Expected aqi=33, got {result.aqi!r}"
 
-    def test_fixture_aqi_category_is_good(self) -> None:
-        """data.aqiCategory = 'Good' (AQI 33 → 0–50 band)."""
+    def test_fixture_aqi_scale_is_epa(self) -> None:
+        """data.aqiScale = 'epa' (Aeris /airquality?filter=airnow is EPA native)."""
         from weewx_clearskies_api.providers.aqi.aeris import _wire_to_canonical  # noqa: PLC0415
         location = self._get_location_from_fixture()
         result = _wire_to_canonical(location)
         assert result is not None
-        assert result.aqiCategory == "Good", (
-            f"Expected aqiCategory='Good' (AQI 33), got {result.aqiCategory!r}"
+        assert result.aqiScale == "epa", (
+            f"Expected aqiScale='epa', got {result.aqiScale!r}"
+        )
+
+    def test_fixture_aqi_category_is_none(self) -> None:
+        """data.aqiCategory = None (dashboard-computed; parsers set None)."""
+        from weewx_clearskies_api.providers.aqi.aeris import _wire_to_canonical  # noqa: PLC0415
+        location = self._get_location_from_fixture()
+        result = _wire_to_canonical(location)
+        assert result is not None
+        assert result.aqiCategory is None, (
+            f"Expected aqiCategory=None (dashboard-computed), got {result.aqiCategory!r}"
         )
 
     def test_fixture_aqi_main_pollutant_is_O3(self) -> None:
@@ -269,49 +279,57 @@ class TestWireToCanonicalHappyPath:
             f"Expected '2026-05-11T00:00:00Z', got {result.observedAt!r}"
         )
 
-    def test_fixture_o3_is_ppm_from_ppb(self) -> None:
-        """pollutantO3 is in ppm (valuePPB=36 → 0.036 ppm) not µg/m³."""
+    def test_fixture_o3_is_ugm3_from_ppb(self) -> None:
+        """pollutantO3 is in µg/m³ (valuePPB=36 → 36 × 48.00 / 24.45 µg/m³)."""
+        import math  # noqa: PLC0415
+
         from weewx_clearskies_api.providers.aqi.aeris import _wire_to_canonical  # noqa: PLC0415
         location = self._get_location_from_fixture()
         result = _wire_to_canonical(location)
         assert result is not None
         assert result.pollutantO3 is not None
-        # 36 ppb / 1000 = 0.036 ppm
-        assert abs(result.pollutantO3 - 0.036) < 1e-9, (
-            f"O3 36 ppb → expected 0.036 ppm, got {result.pollutantO3!r}"
+        expected_ugm3 = 36.0 * 48.00 / 24.45
+        assert math.isclose(result.pollutantO3, expected_ugm3, rel_tol=1e-9), (
+            f"O3 36 ppb → expected {expected_ugm3:.4f} µg/m³, got {result.pollutantO3!r}"
         )
 
-    def test_fixture_co_is_ppm_from_ppb(self) -> None:
-        """pollutantCO is in ppm (valuePPB=143 → 0.143 ppm)."""
+    def test_fixture_co_is_ugm3_from_ppb(self) -> None:
+        """pollutantCO is in µg/m³ (valuePPB=143 → 143 × 28.01 / 24.45 µg/m³)."""
+        import math  # noqa: PLC0415
+
         from weewx_clearskies_api.providers.aqi.aeris import _wire_to_canonical  # noqa: PLC0415
         location = self._get_location_from_fixture()
         result = _wire_to_canonical(location)
         assert result is not None
         assert result.pollutantCO is not None
-        assert abs(result.pollutantCO - 0.143) < 1e-9, (
-            f"CO 143 ppb → expected 0.143 ppm, got {result.pollutantCO!r}"
+        expected_ugm3 = 143.0 * 28.01 / 24.45
+        assert math.isclose(result.pollutantCO, expected_ugm3, rel_tol=1e-9), (
+            f"CO 143 ppb → expected {expected_ugm3:.4f} µg/m³, got {result.pollutantCO!r}"
         )
 
-    def test_fixture_no2_is_ppm_from_ppb(self) -> None:
-        """pollutantNO2 is in ppm (valuePPB=3 → 0.003 ppm)."""
+    def test_fixture_no2_is_ugm3_from_ppb(self) -> None:
+        """pollutantNO2 is in µg/m³ (valuePPB=3 → 3 × 46.01 / 24.45 µg/m³)."""
+        import math  # noqa: PLC0415
+
         from weewx_clearskies_api.providers.aqi.aeris import _wire_to_canonical  # noqa: PLC0415
         location = self._get_location_from_fixture()
         result = _wire_to_canonical(location)
         assert result is not None
         assert result.pollutantNO2 is not None
-        assert abs(result.pollutantNO2 - 0.003) < 1e-9, (
-            f"NO2 3 ppb → expected 0.003 ppm, got {result.pollutantNO2!r}"
+        expected_ugm3 = 3.0 * 46.01 / 24.45
+        assert math.isclose(result.pollutantNO2, expected_ugm3, rel_tol=1e-9), (
+            f"NO2 3 ppb → expected {expected_ugm3:.4f} µg/m³, got {result.pollutantNO2!r}"
         )
 
-    def test_fixture_so2_is_ppm_from_ppb_zero(self) -> None:
-        """pollutantSO2 is in ppm (valuePPB=0 → 0.0 ppm)."""
+    def test_fixture_so2_is_zero_ugm3_from_zero_ppb(self) -> None:
+        """pollutantSO2 is 0.0 µg/m³ (valuePPB=0 → 0 × 64.07 / 24.45 = 0.0 µg/m³)."""
         from weewx_clearskies_api.providers.aqi.aeris import _wire_to_canonical  # noqa: PLC0415
         location = self._get_location_from_fixture()
         result = _wire_to_canonical(location)
         assert result is not None
         assert result.pollutantSO2 is not None
         assert result.pollutantSO2 == 0.0, (
-            f"SO2 0 ppb → expected 0.0 ppm, got {result.pollutantSO2!r}"
+            f"SO2 0 ppb → expected 0.0 µg/m³, got {result.pollutantSO2!r}"
         )
 
     def test_fixture_pm25_is_ugm3_passthrough(self) -> None:
@@ -386,15 +404,16 @@ class TestWireToCanonicalEdgeCases:
         assert result.pollutantSO2 is None
         assert result.pollutantCO is None
 
-    def test_empty_pollutants_list_aqi_and_category_still_populate(self) -> None:
-        """Empty pollutants[] → aqi and aqiCategory still populate from period.aqi."""
+    def test_empty_pollutants_list_aqi_populates_category_is_none(self) -> None:
+        """Empty pollutants[] → aqi populates from period.aqi; aqiCategory=None (dashboard-computed)."""
         from weewx_clearskies_api.providers.aqi.aeris import _wire_to_canonical  # noqa: PLC0415
         location = self._make_minimal_location(aqi=75.0, pollutants=[])
         result = _wire_to_canonical(location)
         assert result is not None
         assert result.aqi == 75, f"Expected aqi=75, got {result.aqi!r}"
-        assert result.aqiCategory == "Moderate", (
-            f"AQI 75 → expected 'Moderate', got {result.aqiCategory!r}"
+        assert result.aqiScale == "epa", f"Expected aqiScale='epa', got {result.aqiScale!r}"
+        assert result.aqiCategory is None, (
+            f"Expected aqiCategory=None (dashboard-computed), got {result.aqiCategory!r}"
         )
 
     def test_dominant_pm1_yields_none_main_pollutant(self) -> None:
@@ -725,11 +744,12 @@ class TestFetchCacheHit:
         # Pre-populate cache with a known record
         reading = AQIReading(
             aqi=33,
-            aqiCategory="Good",
+            aqiScale="epa",
+            aqiCategory=None,
             aqiMainPollutant="O3",
             aqiLocation="seattle",
             pollutantPM25=5.8,
-            pollutantO3=0.036,
+            pollutantO3=70.56,  # µg/m³ (36 ppb × 48.00 / 24.45)
             source="aeris",
             observedAt="2026-05-11T00:00:00Z",
         )

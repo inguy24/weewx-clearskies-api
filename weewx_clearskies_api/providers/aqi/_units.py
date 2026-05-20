@@ -48,17 +48,20 @@ Tables are static; molecular weights and EPA bands are constants of nature
 
 from __future__ import annotations
 
-# Molar volume at 25°C / 1 atm.  Used by µg/m³ → ppm conversion.
+# Molar volume at 25°C / 1 atm.  Used by µg/m³ ↔ ppm conversions.
 _MOLAR_VOLUME = 24.45  # L/mol
 
-# Molecular weights for the four gases canonical stores in ppm (group_fraction).
-# Particulates (PM2.5, PM10) stay in µg/m³ (group_concentration) — no conversion.
+# Molecular weights for the four canonical gas pollutants.
+# Particulates (PM2.5, PM10) stay in µg/m³ — no molar conversion.
 _MOLECULAR_WEIGHTS_G_PER_MOL: dict[str, float] = {
     "O3":  48.00,
     "NO2": 46.01,
     "SO2": 64.07,
     "CO":  28.01,
 }
+
+# Alias used by ppb_to_ugm3 — same table, shorter name.
+_MOLAR_WEIGHTS = _MOLECULAR_WEIGHTS_G_PER_MOL
 
 
 def ugm3_to_ppm(ugm3: float | None, *, pollutant: str) -> float | None:
@@ -113,6 +116,26 @@ def ppb_to_ppm(ppb: float | None) -> float | None:
     if ppb is None:
         return None
     return ppb / 1000.0
+
+
+def ppb_to_ugm3(ppb: float, *, pollutant: str) -> float | None:
+    """Convert ppb (parts per billion) to µg/m³ for the given gas.
+
+    Formula: µg/m³ = ppb × MW / 24.45
+    (at 25°C, 1 atm; molar volume 24.45 L/mol).
+    Inverse of ugm3_to_ppm × 1000 (since ppm = ppb / 1000).
+
+    Args:
+        ppb: concentration in ppb.
+        pollutant: canonical pollutant id ("O3", "NO2", "SO2", "CO").
+
+    Returns:
+        µg/m³ value, or None if pollutant is not in the conversion table.
+    """
+    mw = _MOLAR_WEIGHTS.get(pollutant.upper())
+    if mw is None:
+        return None
+    return ppb * mw / 24.45
 
 
 def epa_category(aqi: int | float | None) -> str | None:

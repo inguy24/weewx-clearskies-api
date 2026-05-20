@@ -242,14 +242,24 @@ class TestWireToCanonicalHappyPath:
         assert reading is not None
         assert reading.aqi == 73, f"Expected aqi=73, got {reading.aqi!r}"
 
-    def test_aqi_category_is_moderate_for_73(self) -> None:
-        """AQI 73 → aqiCategory='Moderate' (51–100 band per LC13)."""
+    def test_aqi_scale_is_epa(self) -> None:
+        """aqiScale = 'epa' (Open-Meteo us_aqi is EPA 0–500 native)."""
         from weewx_clearskies_api.providers.aqi.openmeteo import _wire_to_canonical  # noqa: PLC0415
         wire = self._load_wire()
         reading = _wire_to_canonical(wire)
         assert reading is not None
-        assert reading.aqiCategory == "Moderate", (
-            f"AQI 73 → expected 'Moderate', got {reading.aqiCategory!r}"
+        assert reading.aqiScale == "epa", (
+            f"Expected aqiScale='epa', got {reading.aqiScale!r}"
+        )
+
+    def test_aqi_category_is_none(self) -> None:
+        """aqiCategory = None (dashboard-computed; parsers set None)."""
+        from weewx_clearskies_api.providers.aqi.openmeteo import _wire_to_canonical  # noqa: PLC0415
+        wire = self._load_wire()
+        reading = _wire_to_canonical(wire)
+        assert reading is not None
+        assert reading.aqiCategory is None, (
+            f"Expected aqiCategory=None (dashboard-computed), got {reading.aqiCategory!r}"
         )
 
     def test_aqi_main_pollutant_is_pm25_for_highest_sub_aqi(self) -> None:
@@ -323,56 +333,48 @@ class TestWireToCanonicalHappyPath:
             f"pollutantPM10 should be 4.5 µg/m³ (passthrough), got {reading.pollutantPM10!r}"
         )
 
-    def test_pollutant_o3_converted_from_ugm3_to_ppm(self) -> None:
-        """pollutantO3 = ozone(87.0 µg/m³) × 24.45 / (48.00 × 1000) (chemistry-corrected ppm per LC15)."""
+    def test_pollutant_o3_passes_through_in_ugm3(self) -> None:
+        """pollutantO3 = 87.0 µg/m³ (fixture ozone=87.0; raw passthrough, no conversion)."""
         from weewx_clearskies_api.providers.aqi.openmeteo import _wire_to_canonical  # noqa: PLC0415
         wire = self._load_wire()
         reading = _wire_to_canonical(wire)
         assert reading is not None
-        expected_ppm = 87.0 * 24.45 / (48.00 * 1000)
         assert reading.pollutantO3 is not None
-        assert math.isclose(reading.pollutantO3, expected_ppm, rel_tol=1e-6), (
-            f"pollutantO3: expected {expected_ppm:.6f} ppm (converted), "
-            f"got {reading.pollutantO3!r}"
+        assert math.isclose(reading.pollutantO3, 87.0, rel_tol=1e-6), (
+            f"pollutantO3: expected 87.0 µg/m³ (passthrough), got {reading.pollutantO3!r}"
         )
 
-    def test_pollutant_no2_converted_from_ugm3_to_ppm(self) -> None:
-        """pollutantNO2 = no2(0.2 µg/m³) × 24.45 / (46.01 × 1000) (chemistry-corrected ppm per Q3 amendment)."""
+    def test_pollutant_no2_passes_through_in_ugm3(self) -> None:
+        """pollutantNO2 = 0.2 µg/m³ (fixture nitrogen_dioxide=0.2; raw passthrough)."""
         from weewx_clearskies_api.providers.aqi.openmeteo import _wire_to_canonical  # noqa: PLC0415
         wire = self._load_wire()
         reading = _wire_to_canonical(wire)
         assert reading is not None
-        expected_ppm = 0.2 * 24.45 / (46.01 * 1000)
         assert reading.pollutantNO2 is not None
-        assert math.isclose(reading.pollutantNO2, expected_ppm, rel_tol=1e-6), (
-            f"pollutantNO2: expected {expected_ppm:.9f} ppm (converted), "
-            f"got {reading.pollutantNO2!r}"
+        assert math.isclose(reading.pollutantNO2, 0.2, rel_tol=1e-6), (
+            f"pollutantNO2: expected 0.2 µg/m³ (passthrough), got {reading.pollutantNO2!r}"
         )
 
-    def test_pollutant_so2_converted_from_ugm3_to_ppm(self) -> None:
-        """pollutantSO2 = so2(0.1 µg/m³) × 24.45 / (64.07 × 1000) (chemistry-corrected ppm per Q3 amendment)."""
+    def test_pollutant_so2_passes_through_in_ugm3(self) -> None:
+        """pollutantSO2 = 0.1 µg/m³ (fixture sulphur_dioxide=0.1; raw passthrough)."""
         from weewx_clearskies_api.providers.aqi.openmeteo import _wire_to_canonical  # noqa: PLC0415
         wire = self._load_wire()
         reading = _wire_to_canonical(wire)
         assert reading is not None
-        expected_ppm = 0.1 * 24.45 / (64.07 * 1000)
         assert reading.pollutantSO2 is not None
-        assert math.isclose(reading.pollutantSO2, expected_ppm, rel_tol=1e-6), (
-            f"pollutantSO2: expected {expected_ppm:.9f} ppm (converted), "
-            f"got {reading.pollutantSO2!r}"
+        assert math.isclose(reading.pollutantSO2, 0.1, rel_tol=1e-6), (
+            f"pollutantSO2: expected 0.1 µg/m³ (passthrough), got {reading.pollutantSO2!r}"
         )
 
-    def test_pollutant_co_converted_from_ugm3_to_ppm(self) -> None:
-        """pollutantCO = co(155.0 µg/m³) × 24.45 / (28.01 × 1000) (chemistry-corrected ppm per LC15)."""
+    def test_pollutant_co_passes_through_in_ugm3(self) -> None:
+        """pollutantCO = 155.0 µg/m³ (fixture carbon_monoxide=155.0; raw passthrough)."""
         from weewx_clearskies_api.providers.aqi.openmeteo import _wire_to_canonical  # noqa: PLC0415
         wire = self._load_wire()
         reading = _wire_to_canonical(wire)
         assert reading is not None
-        expected_ppm = 155.0 * 24.45 / (28.01 * 1000)
         assert reading.pollutantCO is not None
-        assert math.isclose(reading.pollutantCO, expected_ppm, rel_tol=1e-6), (
-            f"pollutantCO: expected {expected_ppm:.6f} ppm (converted), "
-            f"got {reading.pollutantCO!r}"
+        assert math.isclose(reading.pollutantCO, 155.0, rel_tol=1e-6), (
+            f"pollutantCO: expected 155.0 µg/m³ (passthrough), got {reading.pollutantCO!r}"
         )
 
     def test_reading_is_aqi_reading_instance(self) -> None:
@@ -407,8 +409,8 @@ class TestWireToCanonicalEdgeCases:
             f"All-null wire response must return None (no useful reading), got {result!r}"
         )
 
-    def test_us_aqi_only_fixture_populates_aqi_and_category(self) -> None:
-        """us_aqi=73 with all sub-AQIs null → aqi=73, aqiCategory='Moderate'."""
+    def test_us_aqi_only_fixture_populates_aqi_and_scale(self) -> None:
+        """us_aqi=73 with all sub-AQIs null → aqi=73, aqiScale='epa', aqiCategory=None."""
         from weewx_clearskies_api.providers.aqi.openmeteo import (  # noqa: PLC0415
             _OpenMeteoAQResponse,
             _wire_to_canonical,
@@ -418,7 +420,8 @@ class TestWireToCanonicalEdgeCases:
         reading = _wire_to_canonical(wire)
         assert reading is not None, "us_aqi=73 with null sub-AQIs must return AQIReading"
         assert reading.aqi == 73
-        assert reading.aqiCategory == "Moderate"
+        assert reading.aqiScale == "epa"
+        assert reading.aqiCategory is None
 
     def test_us_aqi_only_fixture_main_pollutant_is_none(self) -> None:
         """All six us_aqi_* sub-AQIs null → aqiMainPollutant=None (no argmax possible)."""
@@ -473,8 +476,8 @@ class TestWireToCanonicalEdgeCases:
             f"got {reading.aqiMainPollutant!r}"
         )
 
-    def test_aqi_none_yields_none_aqi_category(self) -> None:
-        """us_aqi=None → aqi=None, aqiCategory=None (not derived when no AQI value)."""
+    def test_aqi_none_yields_none_aqi_and_none_category(self) -> None:
+        """us_aqi=None → aqi=None, aqiScale='epa', aqiCategory=None."""
         from weewx_clearskies_api.providers.aqi.openmeteo import (  # noqa: PLC0415
             _OpenMeteoAQResponse,
             _wire_to_canonical,
@@ -484,11 +487,12 @@ class TestWireToCanonicalEdgeCases:
         raw["current"]["us_aqi"] = None
         wire = _OpenMeteoAQResponse.model_validate(raw)
         reading = _wire_to_canonical(wire)
-        # Reading is not None (concentrations are present), but aqi/category are None
+        # Reading is not None (concentrations are present), but aqi is None
         assert reading is not None
         assert reading.aqi is None, f"Expected aqi=None, got {reading.aqi!r}"
+        assert reading.aqiScale == "epa", f"Expected aqiScale='epa', got {reading.aqiScale!r}"
         assert reading.aqiCategory is None, (
-            f"Expected aqiCategory=None when aqi is None, got {reading.aqiCategory!r}"
+            f"Expected aqiCategory=None (always None per refactor), got {reading.aqiCategory!r}"
         )
 
 
@@ -807,6 +811,7 @@ class TestFetchCachePaths:
 
         assert reading1 is not None and reading2 is not None
         assert reading1.aqi == reading2.aqi
+        assert reading1.aqiScale == reading2.aqiScale
         assert reading1.source == reading2.source
         assert reading1.observedAt == reading2.observedAt
         assert reading1.aqiCategory == reading2.aqiCategory

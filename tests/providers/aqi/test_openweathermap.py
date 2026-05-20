@@ -11,29 +11,20 @@ Covers per the task-3b-11 brief §Test coverage shape (test_openweathermap.py):
 
   _wire_to_canonical happy path:
   - Real fixture → canonical AQIReading with all fields populated correctly.
-  - aqi = 31 (O3 sub-AQI is highest after chemistry fix 2026-05-11).
-  - aqiCategory = "Good" (AQI 31 → 0–50 band).
-  - aqiMainPollutant = "O3" (argmax; O3 sub-AQI 31 is unambiguous winner).
+  - aqi = 2 (OWM main.aqi ordinal served as-is).
+  - aqiScale = "owm" (1–5 ordinal scale).
+  - aqiCategory = None (dashboard-computed).
+  - aqiMainPollutant = None (OWM does not supply dominant pollutant).
   - aqiLocation = None (PARTIAL-DOMAIN — no location field on OWM Air Pollution wire).
   - observedAt = "2026-05-11T03:56:58Z" (epoch 1778471818 → UTC Z, LC17).
   - source = "openweathermap".
-  - Gases (O3, NO2, SO2, CO) converted ugm3→ppm via ugm3_to_ppm.
-  - PM2.5/PM10 passed through as µg/m³ (group_concentration).
+  - All gases (O3, NO2, SO2, CO) and PM2.5/PM10 passed through as µg/m³.
   - NH3 and NO silently dropped (no EPA AQI band; LC16).
-  - OWM main.aqi field IGNORED — canonical aqi derived from concentrations (LC4).
 
   _wire_to_canonical edge cases:
-  - All-null components → returns None + would cache sentinel.
+  - main.aqi=None AND all-null components → returns None + would cache sentinel.
   - Empty list[] → no entry to process → None returned.
-  - Components with all None values → _compute_owm_aqi_max returns None → returns None.
-  - Single pollutant non-null → argmax over that single value.
-  - pm10-only non-null → aqiMainPollutant = "PM10".
-
-  _compute_owm_aqi_max:
-  - All pollutants null → returns None.
-  - Single non-null pollutant value → returns that sub-AQI.
-  - Multiple non-null → returns max.
-  - Result capped at 500.
+  - main.aqi ordinal served as-is for all valid OWM values (1–5).
 
   _build_cache_key:
   - Same lat/lon → same key (deterministic).
@@ -227,15 +218,14 @@ class TestWireShapePydanticValidation:
         )
 
     def test_fixture_main_aqi_field_is_parsed(self) -> None:
-        """list[0].main.aqi = 2 (OWM 1–5 ordinal — parsed but IGNORED per LC4)."""
+        """list[0].main.aqi = 2 (OWM 1–5 ordinal — parsed and served as canonical aqi)."""
         from weewx_clearskies_api.providers.aqi.openweathermap import (  # noqa: PLC0415
             _OWMAirPollutionResponse,
         )
         raw = _load_fixture("openweathermap_current.json")
         response = _OWMAirPollutionResponse.model_validate(raw)
-        # The field exists on the model; its value is NOT used in canonical translation
         assert response.list[0].main.aqi == 2, (
-            f"Expected main.aqi=2 (OWM 1-5 scale), got {response.list[0].main.aqi!r}"
+            f"Expected main.aqi=2 (OWM 1-5 ordinal, served as-is), got {response.list[0].main.aqi!r}"
         )
 
     def test_fixture_components_pm25_and_pm10_parsed(self) -> None:
@@ -289,13 +279,11 @@ class TestWireToCanonicalHappyPath:
         result = _wire_to_canonical(entry)
         assert result is not None, "_wire_to_canonical must return AQIReading for valid fixture"
 
-    def test_fixture_aqi_is_31_from_o3(self) -> None:
-        """aqi = 31 (O3 sub-AQI is the highest; chemistry-corrected calc 2026-05-11).
+    def test_fixture_aqi_is_owm_ordinal_2(self) -> None:
+        """aqi = 2 (OWM main.aqi ordinal served as-is with aqiScale='owm').
 
-        O3 = 66.23 µg/m³ × 24.45 / (48.00 × 1000) = 0.033736 ppm.
-        EPA O3 8-hr band (0.000, 0.054, 0, 50): sub-AQI = round(50 × 0.033736 / 0.054) = 31.
-        OWM main.aqi=2 (1–5 ordinal) is IGNORED per LC4 — canonical aqi derived
-        from concentrations via EPA breakpoints.
+        Fixture main.aqi=2 (OWM 1–5 ordinal, 2=Fair).
+        The API no longer derives EPA AQI from concentrations — raw ordinal is served.
         """
         from weewx_clearskies_api.providers.aqi.openweathermap import (  # noqa: PLC0415
             _wire_to_canonical,
@@ -303,32 +291,45 @@ class TestWireToCanonicalHappyPath:
         entry = self._load_entry()
         result = _wire_to_canonical(entry)
         assert result is not None
-        assert result.aqi == 31, (
-            f"Expected aqi=31 (O3 sub-AQI; main.aqi=2 is ignored), got {result.aqi!r}"
+        assert result.aqi == 2, (
+            f"Expected aqi=2 (OWM ordinal from main.aqi), got {result.aqi!r}"
         )
 
-    def test_fixture_aqi_category_is_good(self) -> None:
-        """aqiCategory = 'Good' (AQI 31 → 0–50 band; chemistry-corrected 2026-05-11)."""
+    def test_fixture_aqi_scale_is_owm(self) -> None:
+        """aqiScale = 'owm' (OWM 1–5 ordinal scale)."""
         from weewx_clearskies_api.providers.aqi.openweathermap import (  # noqa: PLC0415
             _wire_to_canonical,
         )
         entry = self._load_entry()
         result = _wire_to_canonical(entry)
         assert result is not None
-        assert result.aqiCategory == "Good", (
-            f"Expected aqiCategory='Good' (AQI 31), got {result.aqiCategory!r}"
+        assert result.aqiScale == "owm", (
+            f"Expected aqiScale='owm', got {result.aqiScale!r}"
         )
 
-    def test_fixture_aqi_main_pollutant_is_o3(self) -> None:
-        """aqiMainPollutant = 'O3' (O3 sub-AQI=31 is the argmax; chemistry-corrected 2026-05-11)."""
+    def test_fixture_aqi_category_is_none(self) -> None:
+        """aqiCategory = None (dashboard-computed; parsers set None)."""
         from weewx_clearskies_api.providers.aqi.openweathermap import (  # noqa: PLC0415
             _wire_to_canonical,
         )
         entry = self._load_entry()
         result = _wire_to_canonical(entry)
         assert result is not None
-        assert result.aqiMainPollutant == "O3", (
-            f"Expected aqiMainPollutant='O3', got {result.aqiMainPollutant!r}"
+        assert result.aqiCategory is None, (
+            f"Expected aqiCategory=None (dashboard-computed), got {result.aqiCategory!r}"
+        )
+
+    def test_fixture_aqi_main_pollutant_is_none(self) -> None:
+        """aqiMainPollutant = None (OWM Air Pollution does not supply dominant pollutant)."""
+        from weewx_clearskies_api.providers.aqi.openweathermap import (  # noqa: PLC0415
+            _wire_to_canonical,
+        )
+        entry = self._load_entry()
+        result = _wire_to_canonical(entry)
+        assert result is not None
+        assert result.aqiMainPollutant is None, (
+            f"Expected aqiMainPollutant=None (not supplied by OWM Air Pollution), "
+            f"got {result.aqiMainPollutant!r}"
         )
 
     def test_fixture_aqi_location_is_none_partial_domain(self) -> None:
@@ -404,60 +405,52 @@ class TestWireToCanonicalHappyPath:
             f"pollutantPM10 should be 0.81 µg/m³ (passthrough), got {result.pollutantPM10!r}"
         )
 
-    def test_fixture_o3_is_ppm_from_ugm3(self) -> None:
-        """pollutantO3 is in ppm (66.23 µg/m³ → via ugm3_to_ppm with MW=48.00)."""
-        from weewx_clearskies_api.providers.aqi._units import ugm3_to_ppm  # noqa: PLC0415
+    def test_fixture_o3_passes_through_in_ugm3(self) -> None:
+        """pollutantO3 = 66.23 µg/m³ (fixture value; raw passthrough, no conversion)."""
         from weewx_clearskies_api.providers.aqi.openweathermap import (  # noqa: PLC0415
             _wire_to_canonical,
         )
         entry = self._load_entry()
         result = _wire_to_canonical(entry)
         assert result is not None
-        expected = ugm3_to_ppm(66.23, pollutant="O3")
-        assert result.pollutantO3 == pytest.approx(expected, rel=1e-6), (
-            f"O3 66.23 µg/m³ → expected {expected:.6f} ppm, got {result.pollutantO3!r}"
+        assert result.pollutantO3 == pytest.approx(66.23, rel=1e-6), (
+            f"O3: expected 66.23 µg/m³ (passthrough), got {result.pollutantO3!r}"
         )
 
-    def test_fixture_no2_is_ppm_from_ugm3(self) -> None:
-        """pollutantNO2 is in ppm (2.05 µg/m³ → via ugm3_to_ppm with MW=46.01)."""
-        from weewx_clearskies_api.providers.aqi._units import ugm3_to_ppm  # noqa: PLC0415
+    def test_fixture_no2_passes_through_in_ugm3(self) -> None:
+        """pollutantNO2 = 2.05 µg/m³ (fixture value; raw passthrough, no conversion)."""
         from weewx_clearskies_api.providers.aqi.openweathermap import (  # noqa: PLC0415
             _wire_to_canonical,
         )
         entry = self._load_entry()
         result = _wire_to_canonical(entry)
         assert result is not None
-        expected = ugm3_to_ppm(2.05, pollutant="NO2")
-        assert result.pollutantNO2 == pytest.approx(expected, rel=1e-6), (
-            f"NO2 2.05 µg/m³ → expected {expected:.6f} ppm, got {result.pollutantNO2!r}"
+        assert result.pollutantNO2 == pytest.approx(2.05, rel=1e-6), (
+            f"NO2: expected 2.05 µg/m³ (passthrough), got {result.pollutantNO2!r}"
         )
 
-    def test_fixture_so2_is_ppm_from_ugm3(self) -> None:
-        """pollutantSO2 is in ppm (0.34 µg/m³ → via ugm3_to_ppm with MW=64.07)."""
-        from weewx_clearskies_api.providers.aqi._units import ugm3_to_ppm  # noqa: PLC0415
+    def test_fixture_so2_passes_through_in_ugm3(self) -> None:
+        """pollutantSO2 = 0.34 µg/m³ (fixture value; raw passthrough, no conversion)."""
         from weewx_clearskies_api.providers.aqi.openweathermap import (  # noqa: PLC0415
             _wire_to_canonical,
         )
         entry = self._load_entry()
         result = _wire_to_canonical(entry)
         assert result is not None
-        expected = ugm3_to_ppm(0.34, pollutant="SO2")
-        assert result.pollutantSO2 == pytest.approx(expected, rel=1e-6), (
-            f"SO2 0.34 µg/m³ → expected {expected:.6f} ppm, got {result.pollutantSO2!r}"
+        assert result.pollutantSO2 == pytest.approx(0.34, rel=1e-6), (
+            f"SO2: expected 0.34 µg/m³ (passthrough), got {result.pollutantSO2!r}"
         )
 
-    def test_fixture_co_is_ppm_from_ugm3(self) -> None:
-        """pollutantCO is in ppm (139.79 µg/m³ → via ugm3_to_ppm with MW=28.01)."""
-        from weewx_clearskies_api.providers.aqi._units import ugm3_to_ppm  # noqa: PLC0415
+    def test_fixture_co_passes_through_in_ugm3(self) -> None:
+        """pollutantCO = 139.79 µg/m³ (fixture value; raw passthrough, no conversion)."""
         from weewx_clearskies_api.providers.aqi.openweathermap import (  # noqa: PLC0415
             _wire_to_canonical,
         )
         entry = self._load_entry()
         result = _wire_to_canonical(entry)
         assert result is not None
-        expected = ugm3_to_ppm(139.79, pollutant="CO")
-        assert result.pollutantCO == pytest.approx(expected, rel=1e-6), (
-            f"CO 139.79 µg/m³ → expected {expected:.6f} ppm, got {result.pollutantCO!r}"
+        assert result.pollutantCO == pytest.approx(139.79, rel=1e-6), (
+            f"CO: expected 139.79 µg/m³ (passthrough), got {result.pollutantCO!r}"
         )
 
     def test_canonical_output_has_no_pollutant_nh3_or_no_field(self) -> None:
@@ -484,7 +477,12 @@ class TestWireToCanonicalHappyPath:
 class TestWireToCanonicalEdgeCases:
     """Edge cases: all-null, empty list, single-pollutant reads."""
 
-    def _make_entry(self, components: dict[str, Any], dt: int = 1778471818) -> Any:
+    def _make_entry(
+        self,
+        components: dict[str, Any],
+        dt: int = 1778471818,
+        main_aqi: int | None = 1,
+    ) -> Any:
         """Build and validate a minimal OWM list entry."""
         from weewx_clearskies_api.providers.aqi.openweathermap import (  # noqa: PLC0415
             _OWMAirPollutionResponse,
@@ -493,200 +491,72 @@ class TestWireToCanonicalEdgeCases:
             "coord": {"lon": _LON, "lat": _LAT},
             "list": [{
                 "dt": dt,
-                "main": {"aqi": 1},
+                "main": {"aqi": main_aqi},
                 "components": components,
             }],
         }
         response = _OWMAirPollutionResponse.model_validate(data)
         return response.list[0]
 
-    def test_all_null_components_returns_none(self) -> None:
-        """All component values None → _wire_to_canonical returns None (no useful reading)."""
+    def test_all_null_components_and_null_aqi_returns_none(self) -> None:
+        """All component values None AND main.aqi=None → _wire_to_canonical returns None."""
         from weewx_clearskies_api.providers.aqi.openweathermap import (  # noqa: PLC0415
             _wire_to_canonical,
         )
-        entry = self._make_entry({
-            "co": None, "no": None, "no2": None, "o3": None,
-            "so2": None, "pm2_5": None, "pm10": None, "nh3": None,
-        })
+        entry = self._make_entry(
+            {
+                "co": None, "no": None, "no2": None, "o3": None,
+                "so2": None, "pm2_5": None, "pm10": None, "nh3": None,
+            },
+            main_aqi=None,
+        )
         result = _wire_to_canonical(entry)
         assert result is None, (
-            "_wire_to_canonical must return None when all components are null"
+            "_wire_to_canonical must return None when aqi AND all components are null"
         )
 
-    def test_pm25_only_non_null_returns_reading(self) -> None:
-        """Only pm2_5 non-null → AQIReading returned with PM2.5 as main pollutant."""
+    def test_null_aqi_but_some_components_returns_reading(self) -> None:
+        """main.aqi=None but pm2_5 non-null → AQIReading returned (has_data via concentrations)."""
         from weewx_clearskies_api.providers.aqi.openweathermap import (  # noqa: PLC0415
             _wire_to_canonical,
         )
-        entry = self._make_entry({
-            "co": None, "no": None, "no2": None, "o3": None,
-            "so2": None, "pm2_5": 5.0, "pm10": None, "nh3": None,
-        })
+        entry = self._make_entry(
+            {
+                "co": None, "no": None, "no2": None, "o3": None,
+                "so2": None, "pm2_5": 5.0, "pm10": None, "nh3": None,
+            },
+            main_aqi=None,
+        )
         result = _wire_to_canonical(entry)
-        assert result is not None, "PM2.5=5.0 should yield a non-None reading"
-        assert result.aqiMainPollutant == "PM2.5", (
-            f"Only PM2.5 non-null → expected aqiMainPollutant='PM2.5', got {result.aqiMainPollutant!r}"
+        assert result is not None, "pm2_5=5.0 with aqi=None should yield a non-None reading"
+        assert result.aqi is None
+        assert result.aqiScale == "owm"
+        assert result.aqiMainPollutant is None, (
+            "OWM does not supply aqiMainPollutant — must be None"
         )
 
-    def test_pm10_only_non_null_yields_pm10_as_main_pollutant(self) -> None:
-        """Only pm10 non-null → aqiMainPollutant = 'PM10'."""
+    def test_aqi_ordinal_served_as_is(self) -> None:
+        """main.aqi is served directly as canonical aqi with aqiScale='owm'."""
         from weewx_clearskies_api.providers.aqi.openweathermap import (  # noqa: PLC0415
             _wire_to_canonical,
         )
-        entry = self._make_entry({
-            "co": None, "no": None, "no2": None, "o3": None,
-            "so2": None, "pm2_5": None, "pm10": 60.0, "nh3": None,
-        })
-        result = _wire_to_canonical(entry)
-        assert result is not None
-        assert result.aqiMainPollutant == "PM10", (
-            f"Only PM10 non-null → expected 'PM10', got {result.aqiMainPollutant!r}"
-        )
-
-    def test_pm25_tie_break_wins_over_pm10(self) -> None:
-        """PM2.5 and PM10 tied sub-AQI → PM2.5 wins (table-order tie-break per LC14)."""
-        from weewx_clearskies_api.providers.aqi._units import (
-            concentration_to_sub_aqi,  # noqa: PLC0415
-        )
-        from weewx_clearskies_api.providers.aqi.openweathermap import (  # noqa: PLC0415
-            _wire_to_canonical,
-        )
-        # Find concentrations that produce the same sub-AQI for PM2.5 and PM10
-        # PM2.5 = 4.5 µg/m³ → midpoint of first band → sub-AQI = 25
-        # PM10 = 27.0 µg/m³ → midpoint of first band → sub-AQI = ~25
-        pm25_sub = concentration_to_sub_aqi(4.5, pollutant="PM2.5")
-        pm10_sub = concentration_to_sub_aqi(27.0, pollutant="PM10")
-        assert pm25_sub == pm10_sub, (
-            f"Precondition: need tied sub-AQIs, got PM2.5={pm25_sub} PM10={pm10_sub}"
-        )
-        entry = self._make_entry({
-            "co": None, "no": None, "no2": None, "o3": None,
-            "so2": None, "pm2_5": 4.5, "pm10": 27.0, "nh3": None,
-        })
-        result = _wire_to_canonical(entry)
-        assert result is not None
-        assert result.aqiMainPollutant == "PM2.5", (
-            f"PM2.5 must beat PM10 on tied sub-AQI (table-order LC14), got {result.aqiMainPollutant!r}"
-        )
-
-    def test_aqi_capped_at_500(self) -> None:
-        """Computed max sub-AQI > 500 is capped to 500 (defensive guard).
-
-        With chemistry-corrected ugm3_to_ppm, CO hits the 50.4 ppm EPA cap at
-        roughly 57700 µg/m³. Use 100000 µg/m³ to ensure the cap fires.
-        """
-        from weewx_clearskies_api.providers.aqi.openweathermap import (  # noqa: PLC0415
-            _wire_to_canonical,
-        )
-        # CO = 100000 µg/m³ → ~87 ppm → well above CO 8-hr cap of 50.4 ppm → 500
-        entry = self._make_entry({
-            "co": 100000.0, "no": None, "no2": None, "o3": None,
-            "so2": None, "pm2_5": None, "pm10": None, "nh3": None,
-        })
-        result = _wire_to_canonical(entry)
-        assert result is not None
-        assert result.aqi is not None
-        assert result.aqi <= 500, f"aqi must be capped at 500, got {result.aqi!r}"
-        assert result.aqi == 500, f"aqi at extreme CO concentration must hit cap, got {result.aqi!r}"
-
-    def test_owm_main_aqi_field_not_used_in_canonical_aqi(self) -> None:
-        """OWM main.aqi=1 (Good) with high CO → canonical aqi != 1 (main.aqi ignored per LC4)."""
-        from weewx_clearskies_api.providers.aqi.openweathermap import (  # noqa: PLC0415
-            _wire_to_canonical,
-        )
-        # main.aqi=1 (Good) but CO is very high → EPA-derived aqi should be high
-        entry = self._make_entry({
-            "co": 500.0, "no": None, "no2": None, "o3": None,
-            "so2": None, "pm2_5": None, "pm10": None, "nh3": None,
-        })
-        result = _wire_to_canonical(entry)
-        assert result is not None
-        # If main.aqi (=1) were used, canonical aqi would be 1 — but it must NOT be
-        assert result.aqi != 1, (
-            f"OWM main.aqi=1 must NOT be used; canonical aqi must be derived "
-            f"from concentrations (got aqi={result.aqi})"
-        )
+        for owm_val in (1, 2, 3, 4, 5):
+            entry = self._make_entry(
+                {"co": None, "no": None, "no2": None, "o3": None,
+                 "so2": None, "pm2_5": 5.0, "pm10": None, "nh3": None},
+                main_aqi=owm_val,
+            )
+            result = _wire_to_canonical(entry)
+            assert result is not None
+            assert result.aqi == owm_val, (
+                f"main.aqi={owm_val} must be served as canonical aqi, got {result.aqi!r}"
+            )
+            assert result.aqiScale == "owm"
+            assert result.aqiMainPollutant is None
 
 
 # ===========================================================================
-# 4. _compute_owm_aqi_max — sub-AQI argmax (returns tuple)
-# ===========================================================================
-
-
-class TestComputeOwmAqiMax:
-    """_compute_owm_aqi_max returns (max_sub_aqi, dominant_pollutant) tuple."""
-
-    def _make_components(self, **kwargs: float | None) -> Any:
-        """Build _OWMAirPollutionComponents from kwargs."""
-        from weewx_clearskies_api.providers.aqi.openweathermap import (  # noqa: PLC0415
-            _OWMAirPollutionComponents,
-        )
-        defaults = {
-            "co": None, "no": None, "no2": None, "o3": None,
-            "so2": None, "pm2_5": None, "pm10": None, "nh3": None,
-        }
-        defaults.update(kwargs)
-        return _OWMAirPollutionComponents.model_validate(defaults)
-
-    def test_all_null_components_returns_none_none_tuple(self) -> None:
-        """All components None → _compute_owm_aqi_max returns (None, None)."""
-        from weewx_clearskies_api.providers.aqi.openweathermap import (  # noqa: PLC0415
-            _compute_owm_aqi_max,
-        )
-        components = self._make_components()
-        aqi, pollutant = _compute_owm_aqi_max(components)
-        assert aqi is None, f"Expected None aqi for all-null components, got {aqi!r}"
-        assert pollutant is None, f"Expected None pollutant for all-null, got {pollutant!r}"
-
-    def test_single_pm25_returns_correct_sub_aqi_and_pollutant(self) -> None:
-        """Only PM2.5 = 9.0 µg/m³ → (sub-AQI 50, 'PM2.5')."""
-        from weewx_clearskies_api.providers.aqi.openweathermap import (  # noqa: PLC0415
-            _compute_owm_aqi_max,
-        )
-        components = self._make_components(pm2_5=9.0)
-        aqi, pollutant = _compute_owm_aqi_max(components)
-        assert aqi == 50, f"PM2.5=9.0 → sub-AQI should be 50, got {aqi!r}"
-        assert pollutant == "PM2.5", f"Expected 'PM2.5', got {pollutant!r}"
-
-    def test_max_taken_correctly_from_multiple_pollutants(self) -> None:
-        """Multiple pollutants → max sub-AQI is returned with correct dominant."""
-        from weewx_clearskies_api.providers.aqi._units import (
-            concentration_to_sub_aqi,  # noqa: PLC0415
-        )
-        from weewx_clearskies_api.providers.aqi.openweathermap import (  # noqa: PLC0415
-            _compute_owm_aqi_max,
-        )
-        pm25_sub = concentration_to_sub_aqi(20.0, pollutant="PM2.5")  # in moderate band
-        pm10_sub = concentration_to_sub_aqi(4.0, pollutant="PM10")    # in good band
-        assert pm25_sub is not None and pm10_sub is not None
-        assert pm25_sub > pm10_sub, "Precondition: PM2.5 sub-AQI should be higher"
-        components = self._make_components(pm2_5=20.0, pm10=4.0)
-        aqi, pollutant = _compute_owm_aqi_max(components)
-        assert aqi == pm25_sub, (
-            f"Expected max sub-AQI={pm25_sub} (PM2.5 wins), got {aqi!r}"
-        )
-        assert pollutant == "PM2.5", f"Expected dominant='PM2.5', got {pollutant!r}"
-
-    def test_result_capped_at_500(self) -> None:
-        """_compute_owm_aqi_max caps aqi at 500 (defensive; extreme values possible).
-
-        Chemistry-corrected ugm3_to_ppm: CO at 100000 µg/m³ ≈ 87 ppm, well above
-        EPA CO 8-hr table's 50.4 ppm cap → sub-AQI 500.
-        """
-        from weewx_clearskies_api.providers.aqi.openweathermap import (  # noqa: PLC0415
-            _compute_owm_aqi_max,
-        )
-        # CO at extremely high concentration to verify cap
-        components = self._make_components(co=100000.0)
-        aqi, pollutant = _compute_owm_aqi_max(components)
-        assert aqi is not None
-        assert aqi == 500, f"Expected aqi capped at 500, got {aqi!r}"
-        assert pollutant == "CO", f"Expected dominant='CO', got {pollutant!r}"
-
-
-# ===========================================================================
-# 5. _build_cache_key — determinism and privacy
+# 4. _build_cache_key — determinism and privacy
 # ===========================================================================
 
 
@@ -868,9 +738,10 @@ class TestFetchCachePaths:
 
         assert result is not None, "Cache miss + valid response must return AQIReading"
         assert result.source == "openweathermap"
-        assert result.aqi == 31  # from fixture computation (chemistry-corrected 2026-05-11)
-        assert result.aqiCategory == "Good"
-        assert result.aqiMainPollutant == "O3"
+        assert result.aqi == 2  # OWM main.aqi ordinal from fixture
+        assert result.aqiScale == "owm"
+        assert result.aqiCategory is None
+        assert result.aqiMainPollutant is None
 
         # Verify cache was populated
         cache = get_cache()
@@ -905,8 +776,8 @@ class TestFetchCachePaths:
             f"Cached value must be sentinel, got {cached!r}"
         )
 
-    def test_cache_miss_all_null_components_returns_none_and_caches_sentinel(self) -> None:
-        """Cache miss + all-null components → None returned + sentinel cached."""
+    def test_cache_miss_all_null_aqi_and_components_returns_none_and_caches_sentinel(self) -> None:
+        """Cache miss + main.aqi=None AND all-null components → None returned + sentinel cached."""
         from weewx_clearskies_api.providers._common.cache import get_cache  # noqa: PLC0415
         from weewx_clearskies_api.providers.aqi.openweathermap import (  # noqa: PLC0415
             _build_cache_key,
@@ -917,7 +788,7 @@ class TestFetchCachePaths:
             "coord": {"lon": _LON, "lat": _LAT},
             "list": [{
                 "dt": 1778471818,
-                "main": {"aqi": 1},
+                "main": {"aqi": None},
                 "components": {
                     "co": None, "no": None, "no2": None, "o3": None,
                     "so2": None, "pm2_5": None, "pm10": None, "nh3": None,
@@ -931,7 +802,7 @@ class TestFetchCachePaths:
             )
             result = fetch(lat=_LAT, lon=_LON, appid=_TEST_APPID)
 
-        assert result is None, "All-null components → must return None"
+        assert result is None, "All-null aqi + components → must return None"
 
         cache = get_cache()
         key = _build_cache_key(_LAT, _LON)
