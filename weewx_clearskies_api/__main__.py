@@ -131,7 +131,7 @@ def _resolve_bind_addresses(host: str, port: int) -> list[tuple[str, int]]:
     """
     results: list[tuple[str, int]] = []
     try:
-        for family, _type, _proto, _cname, sockaddr in socket.getaddrinfo(
+        for _family, _type, _proto, _cname, sockaddr in socket.getaddrinfo(
             host, port, type=socket.SOCK_STREAM
         ):
             ip_str = sockaddr[0]

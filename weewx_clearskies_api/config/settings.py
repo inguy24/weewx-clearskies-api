@@ -19,6 +19,7 @@ Section mapping:
 
 from __future__ import annotations
 
+import contextlib
 import ipaddress
 import logging
 import os
@@ -88,11 +89,9 @@ class ApiSettings:
         # ipaddress.ip_address accepts both IPv4 and IPv6 per coding.md §1.
         # Hostname strings are allowed too — they'll be resolved via getaddrinfo.
         if self.bind_host not in ("", "localhost"):
-            try:
+            # Not a bare IP — accept it as a hostname; resolution happens at bind time.
+            with contextlib.suppress(ValueError):
                 ipaddress.ip_address(self.bind_host)
-            except ValueError:
-                # Not a bare IP — accept it as a hostname; resolution happens at bind time.
-                pass
         if not (1 <= self.bind_port <= 65535):
             raise ValueError(f"[api] bind_port {self.bind_port!r} out of range 1–65535")
         if self.max_request_bytes < 1:

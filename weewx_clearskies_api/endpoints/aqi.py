@@ -51,7 +51,6 @@ from typing import Annotated
 import pydantic
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.exceptions import RequestValidationError
-
 from sqlalchemy.orm import Session
 
 from weewx_clearskies_api.config.settings import AQIHistorySettings
@@ -248,13 +247,13 @@ def get_aqi_current(
     # --- Assemble units block (inline; no shared helper — flag for DRY-extraction) ---
     try:
         units = get_units_block()
-    except RuntimeError:
+    except RuntimeError as exc:
         # Defense-in-depth: units should always be wired before uvicorn starts.
         logger.error(
             "Units block not available at /aqi/current — "
             "this should not happen after successful startup"
         )
-        raise HTTPException(status_code=503, detail="Service starting")
+        raise HTTPException(status_code=503, detail="Service starting") from exc
 
     # --- Find the configured AQI provider in the capability registry ---
     provider_registry = get_provider_registry()
@@ -276,12 +275,12 @@ def get_aqi_current(
     # --- Obtain station lat/lon (ADR-011: single-station, no ?station= param) ---
     try:
         station = get_station_info()
-    except RuntimeError:
+    except RuntimeError as exc:
         logger.error(
             "Station metadata not available at /aqi/current — "
             "this should not happen after successful startup"
         )
-        raise HTTPException(status_code=503, detail="Service starting")
+        raise HTTPException(status_code=503, detail="Service starting") from exc
 
     # --- Dispatch to provider module ---
     if provider_id == "openmeteo":
@@ -374,12 +373,12 @@ def get_aqi_history_endpoint(
     # block populated by the units service from weewx.conf at startup).
     try:
         units = get_units_block()
-    except RuntimeError:
+    except RuntimeError as exc:
         logger.error(
             "Units block not available at /aqi/history — "
             "this should not happen after successful startup"
         )
-        raise HTTPException(status_code=503, detail="Service starting")
+        raise HTTPException(status_code=503, detail="Service starting") from exc
 
     try:
         readings, page_info = get_aqi_history(

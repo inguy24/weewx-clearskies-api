@@ -362,7 +362,7 @@ def load_station_metadata(
         "Station metadata loaded",
         extra={
             "station_id": station_id,
-            "name": raw_location,
+            "station_name": raw_location,
             "latitude": latitude,
             "longitude": longitude,
             "timezone": timezone,

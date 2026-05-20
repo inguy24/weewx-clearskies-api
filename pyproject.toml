@@ -134,5 +134,6 @@ asyncio_mode = "auto"
 log_cli = false
 markers = [
     "integration: marks integration tests that require the dev/test stack (MariaDB or seeded SQLite)",
+    "live_network: marks tests that require live network access",
     "redis: marks integration tests that require the redis compose profile (use with -m 'integration and redis')",
 ]
