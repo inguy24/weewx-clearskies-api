@@ -16,6 +16,35 @@ from datetime import UTC, datetime
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 # ---------------------------------------------------------------------------
+# Shared UTC normalisation helper
+# ---------------------------------------------------------------------------
+
+
+def _as_utc(v: datetime | None) -> datetime | None:
+    """Normalise a datetime to UTC.
+
+    Pydantic v2 accepts ISO 8601 date-only strings (e.g. "2026-05-01") and
+    produces naive datetimes.  Python's datetime.timestamp() treats naive
+    datetimes as *local* time, so on a Pacific-time host a "2026-05-01" query
+    parameter becomes 2026-05-01T07:00:00Z — seven hours off from the intended
+    UTC midnight.  The weewx archive stores Unix epoch seconds (always UTC), so
+    a timezone-naive from/to value silently shifts the query window by the
+    host's UTC offset.
+
+    Fix: if a parsed datetime has no tzinfo, assume UTC and attach it.
+    Timezone-aware values are converted to UTC in case the caller sent a
+    non-UTC offset (e.g. "2026-05-01T00:00:00-07:00").
+    """
+    if v is None:
+        return None
+    if v.tzinfo is None:
+        # Naive datetime — caller omitted timezone; assume UTC per ADR-020.
+        return v.replace(tzinfo=UTC)
+    # Aware datetime — normalise to UTC so downstream epoch arithmetic is consistent.
+    return v.astimezone(UTC)
+
+
+# ---------------------------------------------------------------------------
 # /archive query params
 # ---------------------------------------------------------------------------
 
@@ -34,6 +63,12 @@ class ArchiveQueryParams(BaseModel):
     limit: int = Field(default=1000, ge=1, le=10000)
     cursor: str | None = None
     page: int | None = Field(default=None, ge=1)
+
+    @field_validator("from_", "to", mode="after")
+    @classmethod
+    def normalise_to_utc(cls, v: datetime | None) -> datetime | None:
+        """Treat naive datetimes as UTC; convert tz-aware values to UTC."""
+        return _as_utc(v)
 
     @field_validator("interval")
     @classmethod
@@ -301,6 +336,12 @@ class AQIHistoryQueryParams(BaseModel):
     cursor: str | None = None
     page: int | None = Field(default=None, ge=1)
 
+    @field_validator("from_", "to", mode="after")
+    @classmethod
+    def normalise_to_utc(cls, v: datetime | None) -> datetime | None:
+        """Treat naive datetimes as UTC; convert tz-aware values to UTC."""
+        return _as_utc(v)
+
 
 # ---------------------------------------------------------------------------
 # /earthquakes query params
@@ -325,6 +366,12 @@ class EarthquakesQueryParams(BaseModel):
     to: datetime | None = None
     min_magnitude: float | None = Field(None, ge=0)
     radius_km: float | None = Field(None, ge=0)
+
+    @field_validator("from_", "to", mode="after")
+    @classmethod
+    def normalise_to_utc(cls, v: datetime | None) -> datetime | None:
+        """Treat naive datetimes as UTC; convert tz-aware values to UTC."""
+        return _as_utc(v)
 
 
 # ---------------------------------------------------------------------------

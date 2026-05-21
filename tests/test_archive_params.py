@@ -163,6 +163,77 @@ class TestArchiveParamsModel:
             "ArchiveParams must have extra='forbid' per security-baseline §3.5"
         )
 
+    def test_date_only_from_is_utc_midnight(self) -> None:
+        """from=2026-05-01 (date-only, no tz) → UTC-aware midnight, not local-time midnight.
+
+        weewx archive stores Unix epoch seconds (UTC).  A naive datetime produced
+        by Pydantic from a date-only string would be treated as local time by
+        datetime.timestamp(), shifting the query window by the host's UTC offset.
+        The normalise_to_utc validator must attach UTC so the epoch is correct.
+        """
+        from datetime import UTC
+
+        from weewx_clearskies_api.endpoints.observations import ArchiveParams
+
+        p = ArchiveParams.model_validate({"from": "2026-05-01"})
+        assert p.from_ is not None
+        assert p.from_.tzinfo is not None, (
+            "from_ parsed from a date-only string must be tz-aware (UTC)"
+        )
+        assert p.from_.tzinfo == UTC, (
+            f"from_ must be UTC, got tzinfo={p.from_.tzinfo!r}"
+        )
+        # 2026-05-01T00:00:00Z as a Unix epoch
+        assert int(p.from_.timestamp()) == 1777593600, (
+            "date-only 'from' must produce the UTC-midnight epoch, not a local-time epoch"
+        )
+
+    def test_date_only_to_is_utc_midnight(self) -> None:
+        """to=2026-05-21 (date-only, no tz) → UTC-aware midnight."""
+        from datetime import UTC
+
+        from weewx_clearskies_api.endpoints.observations import ArchiveParams
+
+        p = ArchiveParams.model_validate({"to": "2026-05-21"})
+        assert p.to is not None
+        assert p.to.tzinfo == UTC
+        # 2026-05-21T00:00:00Z
+        assert int(p.to.timestamp()) == 1779321600
+
+    def test_utc_z_from_is_accepted_unchanged(self) -> None:
+        """from=2026-05-01T00:00:00Z → UTC-aware, timestamp unchanged."""
+        from weewx_clearskies_api.endpoints.observations import ArchiveParams
+
+        p = ArchiveParams.model_validate({"from": "2026-05-01T00:00:00Z"})
+        assert p.from_ is not None
+        assert int(p.from_.timestamp()) == 1777593600
+
+    def test_non_utc_offset_from_is_normalised_to_utc(self) -> None:
+        """from=2026-05-01T00:00:00-07:00 → converted to UTC (2026-05-01T07:00:00Z)."""
+        from datetime import UTC
+
+        from weewx_clearskies_api.endpoints.observations import ArchiveParams
+
+        p = ArchiveParams.model_validate({"from": "2026-05-01T00:00:00-07:00"})
+        assert p.from_ is not None
+        assert p.from_.tzinfo == UTC
+        # Midnight Pacific = 07:00 UTC
+        assert int(p.from_.timestamp()) == 1777618800
+
+    def test_none_from_stays_none(self) -> None:
+        """Omitting from → from_=None (normaliser is a no-op for None)."""
+        from weewx_clearskies_api.endpoints.observations import ArchiveParams
+
+        p = ArchiveParams()
+        assert p.from_ is None
+
+    def test_none_to_stays_none(self) -> None:
+        """Omitting to → to=None (normaliser is a no-op for None)."""
+        from weewx_clearskies_api.endpoints.observations import ArchiveParams
+
+        p = ArchiveParams()
+        assert p.to is None
+
 
 class TestRecordsParamsModel:
     """/records query params: RecordsParams Pydantic model."""
