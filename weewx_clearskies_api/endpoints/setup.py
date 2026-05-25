@@ -196,6 +196,7 @@ class StationApplyConfig(BaseModel):
     longitude: float | None = None
     altitude_meters: float | None = None
     timezone: str | None = None
+    default_locale: str | None = None
 
 
 class ProviderConfig(BaseModel):
@@ -287,6 +288,7 @@ class CurrentConfigStationSection(BaseModel):
     altitude_meters: float | None = None
     altitude_unit: str = "meter"
     timezone: str | None = None
+    default_locale: str | None = None
 
 
 class CurrentConfigResponse(BaseModel):
@@ -427,6 +429,8 @@ def _write_api_conf(config_dir: Path, apply: ApplyRequest) -> None:
         cfg["station"]["longitude"] = str(st.longitude)
     if st.altitude_meters is not None:
         cfg["station"]["altitude_meters"] = str(st.altitude_meters)
+    if st.default_locale:
+        cfg["station"]["default_locale"] = st.default_locale
 
     # [column_mapping] — operator-supplied canonical → archive column pairs.
     if apply.column_mapping:
@@ -888,6 +892,8 @@ async def current_config(request: Request) -> CurrentConfigResponse:
                         pass
             if st_section.get("altitude_unit"):
                 station.altitude_unit = str(st_section["altitude_unit"])
+            if st_section.get("default_locale"):
+                station.default_locale = str(st_section["default_locale"])
 
     return CurrentConfigResponse(
         database=database,
