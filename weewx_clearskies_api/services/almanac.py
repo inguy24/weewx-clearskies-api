@@ -700,6 +700,31 @@ def compute_almanac(
     )
 
 
+def compute_current_sun_altitude(lat: float, lon: float, alt_m: float) -> float | None:
+    """Return the sun's current altitude in degrees above/below the horizon.
+
+    Positive = above the horizon (daytime), negative = below (night).
+    Returns None only when the ephemeris is not loaded.
+
+    Uses the same ephemeris loading pattern as compute_almanac() — no
+    duplication of de421.bsp loading logic.
+    """
+    try:
+        ts, eph = get_ts_eph()
+    except RuntimeError:
+        return None
+
+    location = wgs84.latlon(lat, lon, elevation_m=alt_m)  # type: ignore[call-arg]
+    earth = eph["earth"]  # type: ignore[index]
+    sun = eph["sun"]  # type: ignore[index]
+    observer = earth + location  # type: ignore[operator]
+    t_now = ts.now()  # type: ignore[attr-defined]
+    astrometric = observer.at(t_now).observe(sun)  # type: ignore[attr-defined]
+    apparent = astrometric.apparent()  # type: ignore[attr-defined]
+    alt_obj, _az, _dist = apparent.altaz()  # type: ignore[attr-defined]
+    return round(float(alt_obj.degrees), 4)  # type: ignore[attr-defined]
+
+
 def compute_sun_times_year(
     year: int,
     lat: float,

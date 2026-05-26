@@ -783,6 +783,36 @@ class TlsSettings:
             )
 
 
+class ConditionsSettings:
+    """[conditions] section settings (Phase 0B).
+
+    Controls the current conditions text blending engine that populates
+    the weatherText field on Observation responses.
+
+    engine values:
+      "auto"     — blends local sensor data with provider conditions (default).
+      "provider" — uses provider conditions text verbatim (no local blending).
+      "off"      — weatherText is always None on observations.
+    """
+
+    #: Blending engine mode: "auto" | "provider" | "off".
+    engine: str
+
+    _VALID_ENGINES: frozenset[str] = frozenset({"auto", "provider", "off"})
+
+    def __init__(self, section: dict[str, Any]) -> None:
+        self.engine = str(section.get("engine", "auto")).strip()
+
+    def validate(self) -> None:
+        """Raise ValueError on invalid engine value."""
+        if self.engine not in self._VALID_ENGINES:
+            raise ValueError(
+                f"[conditions] engine {self.engine!r} not in "
+                f"{sorted(self._VALID_ENGINES)}. "
+                "Supported values: 'auto', 'provider', 'off'."
+            )
+
+
 class Settings:
     """Top-level runtime settings, assembled from INI file + env vars."""
 
@@ -805,6 +835,7 @@ class Settings:
     forecast: ForecastSettings
     tls: TlsSettings
     branding: BrandingSettings
+    conditions: ConditionsSettings
 
     def __init__(
         self,
@@ -826,6 +857,7 @@ class Settings:
         forecast: ForecastSettings | None = None,
         tls: TlsSettings | None = None,
         branding: BrandingSettings | None = None,
+        conditions: ConditionsSettings | None = None,
         configured: bool = True,
     ) -> None:
         self.configured = configured
@@ -847,6 +879,7 @@ class Settings:
         self.forecast = forecast if forecast is not None else ForecastSettings({})
         self.tls = tls if tls is not None else TlsSettings({})
         self.branding = branding if branding is not None else BrandingSettings({})
+        self.conditions = conditions if conditions is not None else ConditionsSettings({})
 
     def validate(self) -> None:
         """Validate all sections. Raises ValueError on the first failure."""
@@ -862,6 +895,7 @@ class Settings:
         self.forecast.validate()
         self.tls.validate()
         self.branding.validate()
+        self.conditions.validate()
 
 
 # ---------------------------------------------------------------------------
@@ -965,6 +999,7 @@ def load_settings(config_path: Path | None = None) -> Settings:
     forecast_cfg = ForecastSettings(dict(cfg.get("forecast", {})))
     tls_cfg = TlsSettings(dict(cfg.get("tls", {})))
     branding_cfg = BrandingSettings(dict(cfg.get("branding", {})))
+    conditions_cfg = ConditionsSettings(dict(cfg.get("conditions", {})))
 
     settings = Settings(
         api=api_cfg,
@@ -985,6 +1020,7 @@ def load_settings(config_path: Path | None = None) -> Settings:
         forecast=forecast_cfg,
         tls=tls_cfg,
         branding=branding_cfg,
+        conditions=conditions_cfg,
     )
     settings.validate()
 

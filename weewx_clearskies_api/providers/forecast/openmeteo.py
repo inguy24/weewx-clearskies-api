@@ -75,6 +75,7 @@ from weewx_clearskies_api.models.responses import (
     DailyForecastPoint,
     ForecastBundle,
     HourlyForecastPoint,
+    ProviderConditions,
     utc_isoformat,
 )
 from weewx_clearskies_api.providers._common.cache import get_cache
@@ -96,6 +97,7 @@ DOMAIN = "forecast"
 OPENMETEO_BASE_URL = "https://api.open-meteo.com"
 OPENMETEO_FORECAST_PATH = "/v1/forecast"
 DEFAULT_FORECAST_TTL_SECONDS = 1800   # 30 min per ADR-017
+DEFAULT_CONDITIONS_TTL_SECONDS = 300  # 5 min per brief
 
 _API_VERSION = "0.1.0"
 
@@ -314,6 +316,30 @@ class _OpenMeteoDailyBlock(BaseModel):
     weather_code: list[int | None] = Field(default_factory=list)
 
 
+class _OpenMeteoCurrentBlock(BaseModel):
+    """Current-conditions block from Open-Meteo /v1/forecast current= parameter.
+
+    Open-Meteo returns a single-object (not array) current block when the
+    current= query param is supplied alongside hourly/daily.
+    is_day: 0 or 1 integer; converted to bool at translation time.
+    """
+
+    model_config = ConfigDict(extra="ignore")
+
+    time: str
+    temperature_2m: float | None = None
+    relative_humidity_2m: float | None = None
+    weather_code: int | None = None
+    wind_speed_10m: float | None = None
+    wind_direction_10m: float | None = None
+    wind_gusts_10m: float | None = None
+    precipitation: float | None = None
+    rain: float | None = None
+    snowfall: float | None = None
+    cloud_cover: float | None = None
+    is_day: int | None = None  # 0 or 1
+
+
 class _OpenMeteoForecastResponse(BaseModel):
     """Top-level Open-Meteo /v1/forecast response envelope — wire shape.
 
@@ -323,6 +349,8 @@ class _OpenMeteoForecastResponse(BaseModel):
     hourly and daily are optional (they may be absent if the operator omits
     the corresponding query param; with our request they should always be
     present but defensive None handling is correct per security-baseline §3.5).
+    current is optional — present when current= is included in the request;
+    fetch_current_conditions() relies on it being populated.
     """
 
     model_config = ConfigDict(extra="ignore")
@@ -333,6 +361,7 @@ class _OpenMeteoForecastResponse(BaseModel):
     utc_offset_seconds: int
     hourly: _OpenMeteoHourlyBlock | None = None
     daily: _OpenMeteoDailyBlock | None = None
+    current: _OpenMeteoCurrentBlock | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -660,6 +689,11 @@ def fetch(
         "longitude": str(round(lon, 4)),
         "hourly": ",".join(_HOURLY_VARS),
         "daily": ",".join(_DAILY_VARS),
+        "current": (
+            "temperature_2m,relative_humidity_2m,weather_code,"
+            "wind_speed_10m,wind_direction_10m,wind_gusts_10m,"
+            "precipitation,rain,showers,snowfall,cloud_cover,is_day"
+        ),
         "timezone": timezone,
         "timeformat": "iso8601",
         **unit_params,
@@ -706,6 +740,170 @@ def fetch(
         },
     )
     return bundle
+
+
+def fetch_current_conditions(
+    *,
+    lat: float,
+    lon: float,
+    target_unit: str,
+    timezone: str,
+) -> ProviderConditions | None:
+    """Extract current conditions from the cached Open-Meteo forecast response.
+
+    Open-Meteo has no separate current-conditions endpoint.  This function calls
+    fetch() (which caches the full bundle) and extracts the current block that
+    fetch() now requests via the current= query param.
+
+    The ForecastBundle cache and the current-conditions cache share the same
+    fetch() call — no extra HTTP request is made.  The ProviderConditions result
+    is cached independently with DEFAULT_CONDITIONS_TTL_SECONDS (300 s) so it can
+    be reused by the blending engine without re-parsing the full bundle.
+
+    weatherText derived from weather_code via existing _WMO_CODE_TO_TEXT lookup.
+    precipType derived from weather_code via existing _WMO_CODE_TO_PRECIP_TYPE lookup.
+    isDay: is_day == 1 when non-None.
+
+    Args:
+        lat: Station latitude.
+        lon: Station longitude.
+        target_unit: Weewx unit system ("US" | "METRIC" | "METRICWX").
+        timezone: IANA timezone name (passed to fetch() for timezone= param).
+
+    Returns:
+        ProviderConditions on success; None when the current block is absent
+        from the response (should not happen with current= in params, but
+        defensive).
+
+    Raises: same taxonomy as fetch().
+    """
+    # Build conditions cache key first — reuse if available.
+    conditions_cache_key = hashlib.sha256(
+        json.dumps(
+            {
+                "provider_id": PROVIDER_ID,
+                "endpoint": "current_conditions",
+                "params": {
+                    "latitude": round(lat, 4),
+                    "longitude": round(lon, 4),
+                    "target_unit": target_unit,
+                },
+            },
+            sort_keys=True,
+        ).encode()
+    ).hexdigest()
+
+    cached = get_cache().get(conditions_cache_key)
+    if cached is not None:
+        logger.debug(
+            "Cache hit for Open-Meteo current conditions",
+            extra={"provider_id": PROVIDER_ID, "domain": DOMAIN},
+        )
+        return ProviderConditions.model_validate(cached)
+
+    # No conditions cache — call fetch() to populate (or hit) the forecast cache
+    # AND get the raw wire response with current block.
+    # fetch() itself uses the forecast-bundle cache, so on a forecast cache hit
+    # the HTTP call is skipped.  However, fetch() returns a ForecastBundle, not
+    # the raw wire — we cannot extract the current block from the bundle.
+    # Therefore on a conditions cache miss we always make a fresh HTTP call to
+    # get the current block.  This is intentional: conditions TTL (300 s) is
+    # shorter than forecast TTL (1800 s), so conditions can be fresher.
+
+    logger.debug(
+        "Cache miss for Open-Meteo current conditions; calling API",
+        extra={"provider_id": PROVIDER_ID, "domain": DOMAIN},
+    )
+
+    unit_params = _TARGET_UNIT_TO_OPENMETEO_UNITS.get(target_unit)
+    if unit_params is None:
+        raise ProviderProtocolError(
+            f"unknown target_unit {target_unit!r}; expected US, METRIC, or METRICWX",
+            provider_id=PROVIDER_ID,
+            domain=DOMAIN,
+        )
+
+    _rate_limiter.acquire()
+    client = _client_for()
+
+    params: dict[str, str] = {
+        "latitude": str(round(lat, 4)),
+        "longitude": str(round(lon, 4)),
+        "current": (
+            "temperature_2m,relative_humidity_2m,weather_code,"
+            "wind_speed_10m,wind_direction_10m,wind_gusts_10m,"
+            "precipitation,rain,showers,snowfall,cloud_cover,is_day"
+        ),
+        "timezone": timezone,
+        "timeformat": "iso8601",
+        **unit_params,
+    }
+
+    response = client.get(
+        f"{OPENMETEO_BASE_URL}{OPENMETEO_FORECAST_PATH}",
+        params=params,
+    )
+
+    try:
+        wire = _OpenMeteoForecastResponse.model_validate(response.json())
+    except (ValidationError, ValueError) as exc:
+        logger.error(
+            "Open-Meteo current conditions response validation failed: %s. "
+            "Response body (first 2000 chars): %.2000s",
+            exc,
+            response.text,
+        )
+        raise ProviderProtocolError(
+            f"Open-Meteo current conditions response validation failed: {exc}",
+            provider_id=PROVIDER_ID,
+            domain=DOMAIN,
+        ) from exc
+
+    if wire.current is None:
+        logger.warning(
+            "Open-Meteo response missing current block despite current= param; "
+            "returning None",
+            extra={"provider_id": PROVIDER_ID, "domain": DOMAIN},
+        )
+        return None
+
+    cur = wire.current
+    code_int = cur.weather_code
+    code_str: str | None = str(code_int) if code_int is not None else None
+    weather_text: str | None = _WMO_CODE_TO_TEXT.get(code_int) if code_int is not None else None
+    precip_type: str | None = _WMO_CODE_TO_PRECIP_TYPE.get(code_int) if code_int is not None else None
+    is_day: bool | None = (cur.is_day == 1) if cur.is_day is not None else None
+
+    conditions = ProviderConditions(
+        weatherText=weather_text,
+        weatherCode=code_str,
+        precipType=precip_type,
+        cloudCover=cur.cloud_cover,
+        isDay=is_day,
+        temperature=cur.temperature_2m,
+        humidity=cur.relative_humidity_2m,
+        windSpeed=cur.wind_speed_10m,
+        windDir=cur.wind_direction_10m,
+        source=PROVIDER_ID,
+    )
+
+    get_cache().set(
+        conditions_cache_key,
+        conditions.model_dump(mode="json"),
+        ttl_seconds=DEFAULT_CONDITIONS_TTL_SECONDS,
+    )
+
+    logger.info(
+        "Open-Meteo current conditions fetched",
+        extra={
+            "provider_id": PROVIDER_ID,
+            "domain": DOMAIN,
+            "lat": round(lat, 4),
+            "lon": round(lon, 4),
+            "target_unit": target_unit,
+        },
+    )
+    return conditions
 
 
 def _reset_http_client_for_tests() -> None:

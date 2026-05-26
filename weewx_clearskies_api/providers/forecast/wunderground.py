@@ -98,6 +98,7 @@ from pydantic import BaseModel, ConfigDict, ValidationError
 from weewx_clearskies_api.models.responses import (
     DailyForecastPoint,
     ForecastBundle,
+    ProviderConditions,
     utc_isoformat,
 )
 from weewx_clearskies_api.providers._common.cache import get_cache
@@ -120,7 +121,9 @@ PROVIDER_ID = "wunderground"
 DOMAIN = "forecast"
 WUNDERGROUND_BASE_URL = "https://api.weather.com"
 WUNDERGROUND_FORECAST_PATH = "/v3/wx/forecast/daily/5day"
+WUNDERGROUND_OBSERVATIONS_PATH = "/v2/pws/observations/current"
 DEFAULT_FORECAST_TTL_SECONDS = 1800   # 30 min per ADR-017
+DEFAULT_CONDITIONS_TTL_SECONDS = 300  # 5 min per brief
 
 _API_VERSION = "0.1.0"
 
@@ -243,6 +246,51 @@ class _WU5DayResponse(BaseModel):
     validTimeLocal: list[str | None] | None = None     # ISO-8601 with local offset
     validTimeUtc: list[int | None] | None = None       # epoch seconds UTC
     daypart: list[Any] | None = None                   # list of 1 _WUDaypart object
+
+
+class _WUObsUnitBlock(BaseModel):
+    """Unit-specific measurement block within a WU PWS observation.
+
+    Wunderground returns separate imperial / metric / metric_si sub-objects.
+    The caller selects the block matching target_unit.
+    """
+
+    model_config = ConfigDict(extra="ignore")
+
+    temp: float | None = None
+    heatIndex: float | None = None
+    dewpt: float | None = None
+    windChill: float | None = None
+    windSpeed: float | None = None
+    windGust: float | None = None
+    pressure: float | None = None
+    precipRate: float | None = None
+    precipTotal: float | None = None
+    elev: float | None = None
+
+
+class _WUObservation(BaseModel):
+    """One PWS observation record from /v2/pws/observations/current."""
+
+    model_config = ConfigDict(extra="ignore")
+
+    stationID: str | None = None
+    obsTimeUtc: str | None = None
+    winddir: float | None = None    # degrees (unit-invariant)
+    humidity: float | None = None   # percent (unit-invariant)
+    solarRadiation: float | None = None
+    uv: float | None = None
+    imperial: _WUObsUnitBlock | None = None
+    metric: _WUObsUnitBlock | None = None
+    metric_si: _WUObsUnitBlock | None = None
+
+
+class _WUCurrentResponse(BaseModel):
+    """Top-level /v2/pws/observations/current response envelope."""
+
+    model_config = ConfigDict(extra="ignore")
+
+    observations: list[_WUObservation] = []
 
 
 # ---------------------------------------------------------------------------
@@ -690,6 +738,180 @@ def fetch(
         },
     )
     return bundle
+
+
+def fetch_current_conditions(
+    *,
+    lat: float,  # noqa: ARG001
+    lon: float,  # noqa: ARG001
+    target_unit: str,
+    api_key: str | None,
+    pws_station_id: str | None,
+    http_client: ProviderHTTPClient | None = None,
+) -> ProviderConditions | None:
+    """Call Wunderground /v2/pws/observations/current and return ProviderConditions.
+
+    Uses the same HTTP client, rate limiter, credentials, and error-handling
+    patterns as fetch().  Cache key uses endpoint="current_conditions" so its
+    TTL (300 s) is independent of the forecast bundle TTL (1800 s).
+
+    LIMITATION: WU PWS returns NO weatherText — only numeric sensor data.
+    ProviderConditions.weatherText is always None; the blending engine will
+    construct text from local sensors only (per brief spec).
+
+    Unit block selection per target_unit:
+      US       → observation.imperial
+      METRIC   → observation.metric
+      METRICWX → observation.metric_si
+
+    Args:
+        lat: Station latitude (unused in the API call; included for consistency
+             with the fetch() signature so callers can use the same keyword args).
+        lon: Station longitude (same note as lat).
+        target_unit: Weewx unit system ("US" | "METRIC" | "METRICWX").
+        api_key: Wunderground apiKey from env WEEWX_CLEARSKIES_WUNDERGROUND_API_KEY.
+        pws_station_id: PWS station ID from env WEEWX_CLEARSKIES_WUNDERGROUND_PWS_STATION_ID.
+        http_client: Optional ProviderHTTPClient override for testing.
+
+    Returns:
+        ProviderConditions on success; None when the observations list is empty.
+
+    Raises:
+        KeyInvalid: api_key or pws_station_id is missing/empty, or WU returned 401.
+        QuotaExhausted: WU returned 429.
+        ProviderProtocolError: target_unit unknown or response validation failed.
+        TransientNetworkError: Network/DNS failure or 5xx after retries.
+    """
+    if not api_key or not pws_station_id:
+        missing = []
+        if not api_key:
+            missing.append("WEEWX_CLEARSKIES_WUNDERGROUND_API_KEY")
+        if not pws_station_id:
+            missing.append("WEEWX_CLEARSKIES_WUNDERGROUND_PWS_STATION_ID")
+        raise KeyInvalid(
+            f"Wunderground credentials missing — set {' and '.join(missing)}",
+            provider_id=PROVIDER_ID,
+            domain=DOMAIN,
+        )
+
+    if target_unit not in {"US", "METRIC", "METRICWX"}:
+        raise ProviderProtocolError(
+            f"Unknown target_unit {target_unit!r}; expected US, METRIC, or METRICWX",
+            provider_id=PROVIDER_ID,
+            domain=DOMAIN,
+        )
+
+    # Cache key uses pws_station_id (not lat/lon) — PWS observation is station-specific.
+    conditions_cache_key = hashlib.sha256(
+        json.dumps(
+            {
+                "provider_id": PROVIDER_ID,
+                "endpoint": "current_conditions",
+                "params": {
+                    "pws_station_id": pws_station_id,
+                    "target_unit": target_unit,
+                },
+            },
+            sort_keys=True,
+        ).encode()
+    ).hexdigest()
+
+    cached = get_cache().get(conditions_cache_key)
+    if cached is not None:
+        logger.debug(
+            "Cache hit for Wunderground current conditions",
+            extra={"provider_id": PROVIDER_ID, "domain": DOMAIN},
+        )
+        return ProviderConditions.model_validate(cached)
+
+    logger.debug(
+        "Cache miss for Wunderground current conditions; calling /v2/pws/observations/current",
+        extra={"provider_id": PROVIDER_ID, "domain": DOMAIN},
+    )
+
+    # Map target_unit → WU units param (mirrors fetch()).
+    wu_units_map = {"US": "e", "METRIC": "m", "METRICWX": "s"}
+    wu_units = wu_units_map[target_unit]
+
+    params: dict[str, str] = {
+        "stationId": pws_station_id,
+        "format": "json",
+        "apiKey": api_key,
+        "units": wu_units,
+    }
+
+    client = http_client or _client_for()
+    _rate_limiter.acquire()
+
+    # Bare client.get() — all canonical exceptions propagate (L2 carry-forward).
+    response = client.get(WUNDERGROUND_BASE_URL + WUNDERGROUND_OBSERVATIONS_PATH, params=params)
+
+    try:
+        wire = _WUCurrentResponse.model_validate(response.json())
+    except (ValidationError, ValueError) as exc:
+        logger.error(
+            "Wunderground PWS observations response validation failed: %s. "
+            "Response body (first 2000 chars): %.2000s",
+            exc,
+            response.text,
+        )
+        raise ProviderProtocolError(
+            f"Wunderground PWS observations response validation failed: {exc}",
+            provider_id=PROVIDER_ID,
+            domain=DOMAIN,
+        ) from exc
+
+    if not wire.observations:
+        logger.warning(
+            "Wunderground PWS observations list empty for station %s; "
+            "returning None for current conditions",
+            pws_station_id,
+            extra={"provider_id": PROVIDER_ID, "domain": DOMAIN},
+        )
+        return None
+
+    obs = wire.observations[0]
+
+    # Select unit block per target_unit.
+    if target_unit == "US":
+        unit_block = obs.imperial
+    elif target_unit == "METRIC":
+        unit_block = obs.metric
+    else:  # METRICWX
+        unit_block = obs.metric_si
+
+    temperature: float | None = unit_block.temp if unit_block else None
+    wind_speed: float | None = unit_block.windSpeed if unit_block else None
+
+    conditions = ProviderConditions(
+        weatherText=None,       # WU PWS supplies no weatherText (per brief spec)
+        weatherCode=None,       # WU PWS supplies no weather code
+        precipType=None,        # WU PWS supplies no precip type
+        cloudCover=None,        # WU PWS supplies no cloud cover
+        isDay=None,             # WU PWS supplies no day/night flag
+        temperature=temperature,
+        humidity=obs.humidity,
+        windSpeed=wind_speed,
+        windDir=obs.winddir,
+        source=PROVIDER_ID,
+    )
+
+    get_cache().set(
+        conditions_cache_key,
+        conditions.model_dump(mode="json"),
+        ttl_seconds=DEFAULT_CONDITIONS_TTL_SECONDS,
+    )
+
+    logger.info(
+        "Wunderground current conditions fetched from PWS station %s",
+        pws_station_id,
+        extra={
+            "provider_id": PROVIDER_ID,
+            "domain": DOMAIN,
+            "target_unit": target_unit,
+        },
+    )
+    return conditions
 
 
 def _reset_http_client_for_tests() -> None:

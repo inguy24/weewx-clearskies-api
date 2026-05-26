@@ -85,6 +85,7 @@ from weewx_clearskies_api.models.responses import (
     DailyForecastPoint,
     ForecastBundle,
     HourlyForecastPoint,
+    ProviderConditions,
     utc_isoformat,
 )
 from weewx_clearskies_api.providers._common.cache import get_cache
@@ -108,6 +109,7 @@ DOMAIN = "forecast"
 OWM_BASE_URL = "https://api.openweathermap.org"
 OWM_ONECALL_PATH = "/data/3.0/onecall"
 DEFAULT_FORECAST_TTL_SECONDS = 1800   # 30 min per ADR-017
+DEFAULT_CONDITIONS_TTL_SECONDS = 300  # 5 min per brief
 
 _API_VERSION = "0.1.0"
 
@@ -288,6 +290,28 @@ class _OWMDailyPeriod(BaseModel):
     moon_phase: float | None = None
 
 
+class _OWMCurrentBlock(BaseModel):
+    """Current conditions block from One Call 3.0 current object.
+
+    OWM returns a single current object (not an array) when current is not
+    excluded.  clouds is the raw percent integer; cast to float at translation.
+    weather[] reuses the existing _OWMWeatherEntry model.
+    """
+
+    model_config = ConfigDict(extra="ignore")
+
+    temp: float | None = None
+    feels_like: float | None = None
+    humidity: float | None = None
+    wind_speed: float | None = None
+    wind_deg: float | None = None
+    wind_gust: float | None = None
+    weather: list[_OWMWeatherEntry] = Field(default_factory=list)
+    clouds: float | None = None       # 0-100 percent cloud cover
+    visibility: float | None = None
+    uvi: float | None = None
+
+
 class _OWMOneCallResponse(BaseModel):
     """Top-level One Call 3.0 response — wire shape."""
 
@@ -297,6 +321,7 @@ class _OWMOneCallResponse(BaseModel):
     lon: float
     timezone: str | None = None
     timezone_offset: int = 0          # UTC offset in seconds for station-local date derivation
+    current: _OWMCurrentBlock | None = None  # present when not excluded
     hourly: list[_OWMHourlyPeriod] = Field(default_factory=list)
     daily: list[_OWMDailyPeriod] = Field(default_factory=list)
 
@@ -855,7 +880,7 @@ def fetch(
         "lon": str(round(lon, 6)),
         "appid": appid,
         "units": owm_units,
-        "exclude": "current,minutely,alerts",
+        "exclude": "minutely,alerts",
     }
 
     _rate_limiter.acquire()
@@ -945,6 +970,184 @@ def fetch(
         },
     )
     return bundle
+
+
+def fetch_current_conditions(
+    *,
+    lat: float,
+    lon: float,
+    target_unit: str,
+    appid: str | None,
+    http_client: ProviderHTTPClient | None = None,
+) -> ProviderConditions | None:
+    """Extract current conditions from the OWM One Call 3.0 response.
+
+    Reads from the same cache as fetch() because fetch() now includes the
+    current block in the One Call response (exclude no longer omits "current").
+    On a cache hit, the cached bundle contains current data embedded; this
+    function fetches the raw wire response separately with its own 300 s TTL
+    cache key so conditions can be fresher than the 1800 s forecast bundle.
+
+    weatherText  = current.weather[0].description (if weather list non-empty).
+    weatherCode  = str(current.weather[0].id).
+    cloudCover   = current.clouds (0-100 percent).
+    Unit conversions mirror fetch() hourly-period logic (_convert_owm_units).
+
+    The same Q1 basic-tier-401 graceful path applies: a 401 from the One Call
+    endpoint returns None rather than raising KeyInvalid, matching fetch()'s
+    behavior.
+
+    Args:
+        lat: Station latitude.
+        lon: Station longitude.
+        target_unit: Weewx unit system ("US" | "METRIC" | "METRICWX").
+        appid: OWM API key from env var WEEWX_CLEARSKIES_OPENWEATHERMAP_APPID.
+        http_client: Optional ProviderHTTPClient override for testing.
+
+    Returns:
+        ProviderConditions on success; None on basic-tier 401 or absent current block.
+
+    Raises:
+        KeyInvalid: appid is None/empty.
+        QuotaExhausted: OWM returned 429.
+        ProviderProtocolError: target_unit unknown or response validation failed.
+        TransientNetworkError: Network/DNS failure or 5xx after retries.
+    """
+    if not appid:
+        raise KeyInvalid(
+            "OpenWeatherMap appid missing — set WEEWX_CLEARSKIES_OPENWEATHERMAP_APPID",
+            provider_id=PROVIDER_ID,
+            domain=DOMAIN,
+        )
+
+    if target_unit not in {"US", "METRIC", "METRICWX"}:
+        raise ProviderProtocolError(
+            f"Unknown target_unit {target_unit!r}; expected US, METRIC, or METRICWX",
+            provider_id=PROVIDER_ID,
+            domain=DOMAIN,
+        )
+
+    # Separate conditions cache key so TTL is independent of the forecast bundle.
+    conditions_cache_key = hashlib.sha256(
+        json.dumps(
+            {
+                "provider_id": PROVIDER_ID,
+                "endpoint": "current_conditions",
+                "params": {
+                    "lat4": round(lat, 4),
+                    "lon4": round(lon, 4),
+                    "target_unit": target_unit,
+                },
+            },
+            sort_keys=True,
+        ).encode()
+    ).hexdigest()
+
+    cached = get_cache().get(conditions_cache_key)
+    if cached is not None:
+        logger.debug(
+            "Cache hit for OWM current conditions",
+            extra={"provider_id": PROVIDER_ID, "domain": DOMAIN},
+        )
+        return ProviderConditions.model_validate(cached)
+
+    logger.debug(
+        "Cache miss for OWM current conditions; calling /data/3.0/onecall",
+        extra={"provider_id": PROVIDER_ID, "domain": DOMAIN},
+    )
+
+    owm_units = "imperial" if target_unit == "US" else "metric"
+    client = http_client or _client_for()
+
+    params: dict[str, str] = {
+        "lat": str(round(lat, 6)),
+        "lon": str(round(lon, 6)),
+        "appid": appid,
+        "units": owm_units,
+        "exclude": "minutely,alerts",
+    }
+
+    _rate_limiter.acquire()
+
+    # Same Q1 narrow try/except as fetch(): basic-tier 401 returns None.
+    try:
+        response = client.get(OWM_BASE_URL + OWM_ONECALL_PATH, params=params)
+    except KeyInvalid as exc:
+        if exc.status_code == 401:
+            logger.warning(
+                "OpenWeatherMap appid lacks One Call 3.0 subscription — "
+                "returning None for current conditions (Q1 user decision 2026-05-08)",
+                extra={"provider_id": PROVIDER_ID, "domain": DOMAIN},
+            )
+            return None
+        raise
+
+    try:
+        wire = _OWMOneCallResponse.model_validate(response.json())
+    except (ValidationError, ValueError) as exc:
+        logger.error(
+            "OWM current conditions response validation failed: %s. "
+            "Response body (first 2000 chars): %.2000s",
+            exc,
+            response.text,
+        )
+        raise ProviderProtocolError(
+            f"OWM current conditions response validation failed: {exc}",
+            provider_id=PROVIDER_ID,
+            domain=DOMAIN,
+        ) from exc
+
+    if wire.current is None:
+        logger.warning(
+            "OWM response missing current block; returning None",
+            extra={"provider_id": PROVIDER_ID, "domain": DOMAIN},
+        )
+        return None
+
+    cur = wire.current
+
+    weather_code: str | None = None
+    weather_text: str | None = None
+    precip_type: str | None = None
+    if cur.weather:
+        entry = cur.weather[0]
+        weather_code = str(entry.id)
+        weather_text = entry.description or None
+        precip_type = _owm_weather_code_to_precip_type(entry.id)
+
+    wind_speed = _convert_owm_units(cur.wind_speed, field_kind="wind_speed", target_unit=target_unit)
+    wind_gust = _convert_owm_units(cur.wind_gust, field_kind="wind_gust", target_unit=target_unit)
+
+    conditions = ProviderConditions(
+        weatherText=weather_text,
+        weatherCode=weather_code,
+        precipType=precip_type,
+        cloudCover=cur.clouds,
+        isDay=None,   # OWM current block has no is_day field
+        temperature=cur.temp,
+        humidity=cur.humidity,
+        windSpeed=wind_speed,
+        windDir=cur.wind_deg,
+        source=PROVIDER_ID,
+    )
+
+    get_cache().set(
+        conditions_cache_key,
+        conditions.model_dump(mode="json"),
+        ttl_seconds=DEFAULT_CONDITIONS_TTL_SECONDS,
+    )
+
+    logger.info(
+        "OWM current conditions fetched",
+        extra={
+            "provider_id": PROVIDER_ID,
+            "domain": DOMAIN,
+            "lat": round(lat, 4),
+            "lon": round(lon, 4),
+            "target_unit": target_unit,
+        },
+    )
+    return conditions
 
 
 def _reset_http_client_for_tests() -> None:

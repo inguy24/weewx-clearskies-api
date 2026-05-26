@@ -83,6 +83,7 @@ from weewx_clearskies_api.models.responses import (
     ForecastBundle,
     ForecastDiscussion,
     HourlyForecastPoint,
+    ProviderConditions,
     utc_isoformat,
 )
 from weewx_clearskies_api.providers._common.cache import get_cache
@@ -105,7 +106,9 @@ PROVIDER_ID = "aeris"
 DOMAIN = "forecast"
 AERIS_BASE_URL = "https://data.api.xweather.com"
 AERIS_FORECASTS_PATH = "/forecasts"
+AERIS_OBSERVATIONS_PATH = "/observations"
 DEFAULT_FORECAST_TTL_SECONDS = 1800   # 30 min per ADR-017
+DEFAULT_CONDITIONS_TTL_SECONDS = 300  # 5 min per brief
 HOURLY_LIMIT = 240                     # 10 days × 24h, well above 384h ForecastQueryParams cap
 DAYNIGHT_LIMIT = 14                    # 7 days × 2 (paired day/night)
 
@@ -334,6 +337,36 @@ class _AerisEnvelope(BaseModel):
     error: dict[str, Any] | None = None
     # response is a list of location objects; we always use [0]
     response: list[dict[str, Any]] = Field(default_factory=list)
+
+
+class _AerisCurrentOb(BaseModel):
+    """Wire shape of the ob block from /observations/{lat},{lon}."""
+
+    model_config = ConfigDict(extra="ignore")
+
+    weather: str | None = None
+    weatherPrimaryCoded: str | None = None
+    tempF: float | None = None
+    tempC: float | None = None
+    humidity: float | None = None
+    windSpeedMPH: float | None = None
+    windSpeedKPH: float | None = None
+    windSpeedMPS: float | None = None
+    windDirDEG: float | None = None
+    sky: float | None = None
+    isDay: bool | None = None
+    precipIN: float | None = None
+    precipMM: float | None = None
+    snowDepthIN: float | None = None
+    snowDepthCM: float | None = None
+
+
+class _AerisCurrentResponse(BaseModel):
+    """Wire shape of response[0] from /observations/{lat},{lon}."""
+
+    model_config = ConfigDict(extra="ignore")
+
+    ob: _AerisCurrentOb
 
 
 # ---------------------------------------------------------------------------
@@ -1051,6 +1084,184 @@ def fetch(
         },
     )
     return bundle
+
+
+def _build_current_conditions_cache_key(lat: float, lon: float, target_unit: str) -> str:
+    """Build a deterministic cache key for the Aeris current-conditions call.
+
+    Separate from the forecast bundle key so TTL and invalidation are independent.
+    endpoint="current_conditions" per brief spec.
+    Lat/lon rounded to 4 decimal places per ADR-017.
+    """
+    payload = json.dumps(
+        {
+            "provider_id": PROVIDER_ID,
+            "endpoint": "current_conditions",
+            "params": {
+                "latitude": round(lat, 4),
+                "longitude": round(lon, 4),
+                "target_unit": target_unit,
+            },
+        },
+        sort_keys=True,
+    )
+    return hashlib.sha256(payload.encode()).hexdigest()
+
+
+def fetch_current_conditions(
+    *,
+    lat: float,
+    lon: float,
+    target_unit: str,
+    client_id: str | None,
+    client_secret: str | None,
+) -> ProviderConditions | None:
+    """Call Aeris /observations/{lat},{lon} and return ProviderConditions.
+
+    Uses the same HTTP client, rate limiter, and error-handling patterns as
+    fetch().  Cache key uses endpoint="current_conditions" so its TTL (300 s)
+    is independent of the forecast bundle TTL (1800 s).
+
+    Unit-field selection mirrors fetch() hourly-period logic:
+      US       → tempF, windSpeedMPH
+      METRIC   → tempC, windSpeedKPH
+      METRICWX → tempC, windSpeedMPS
+
+    weatherText = ob.weather
+    cloudCover  = ob.sky (0-100 percent)
+    precipType  derived from ob.weatherPrimaryCoded via existing
+                _aeris_descriptor_to_precip_type().
+
+    Args:
+        lat: Station latitude.
+        lon: Station longitude.
+        target_unit: Weewx unit system ("US" | "METRIC" | "METRICWX").
+        client_id: Aeris client_id from env var WEEWX_CLEARSKIES_AERIS_CLIENT_ID.
+        client_secret: Aeris client_secret from env var WEEWX_CLEARSKIES_AERIS_CLIENT_SECRET.
+
+    Returns:
+        ProviderConditions on success; None when the Aeris response is empty
+        (warn_location path — location outside Aeris coverage).
+
+    Raises:
+        KeyInvalid: Credentials missing, or Aeris returned 401.
+        QuotaExhausted: Aeris returned 429.
+        ProviderProtocolError: Response validation failure, unknown target_unit,
+            or Aeris returned success=false.
+        TransientNetworkError: Network/DNS failure or 5xx after retries.
+    """
+    if not client_id or not client_secret:
+        raise KeyInvalid(
+            "Aeris credentials missing — set WEEWX_CLEARSKIES_AERIS_CLIENT_ID "
+            "and WEEWX_CLEARSKIES_AERIS_CLIENT_SECRET env vars",
+            provider_id=PROVIDER_ID,
+            domain=DOMAIN,
+        )
+
+    if target_unit not in {"US", "METRIC", "METRICWX"}:
+        raise ProviderProtocolError(
+            f"Unknown target_unit {target_unit!r}; expected US, METRIC, or METRICWX",
+            provider_id=PROVIDER_ID,
+            domain=DOMAIN,
+        )
+
+    cache_key = _build_current_conditions_cache_key(lat, lon, target_unit)
+    cached = get_cache().get(cache_key)
+    if cached is not None:
+        logger.debug(
+            "Cache hit for Aeris current conditions",
+            extra={"provider_id": PROVIDER_ID, "domain": DOMAIN},
+        )
+        return ProviderConditions.model_validate(cached)
+
+    logger.debug(
+        "Cache miss for Aeris current conditions; calling /observations",
+        extra={"provider_id": PROVIDER_ID, "domain": DOMAIN},
+    )
+
+    location = f"{round(lat, 4)},{round(lon, 4)}"
+    url = f"{AERIS_BASE_URL}{AERIS_OBSERVATIONS_PATH}/{location}"
+    params = {
+        "client_id": client_id,
+        "client_secret": client_secret,
+    }
+
+    _rate_limiter.acquire()
+    # ProviderHTTPClient.get raises canonical taxonomy exceptions; let them
+    # propagate — do NOT re-wrap (same rule as _fetch_hourly).
+    response = _client_for().get(url, params=params)
+
+    raw_list = _parse_aeris_envelope_raw(response, call_label="observations")
+    if not raw_list:
+        # warn_location path — location outside Aeris coverage; return None.
+        logger.warning(
+            "Aeris observations returned empty response list for lat=%s,lon=%s — "
+            "location may be outside coverage",
+            round(lat, 4),
+            round(lon, 4),
+            extra={"provider_id": PROVIDER_ID, "domain": DOMAIN},
+        )
+        return None
+
+    raw_first = raw_list[0]
+    try:
+        current_wire = _AerisCurrentResponse.model_validate(raw_first)
+    except ValidationError as exc:
+        logger.error(
+            "Aeris observations response[0] validation failed: %s. "
+            "Response body (first 2000 chars): %.2000s",
+            exc,
+            response.text,
+        )
+        raise ProviderProtocolError(
+            f"Aeris observations response validation failed: {exc}",
+            provider_id=PROVIDER_ID,
+            domain=DOMAIN,
+        ) from exc
+
+    ob = current_wire.ob
+
+    # Unit-field selection mirrors hourly-period logic (ADR-019).
+    if target_unit == "US":
+        temperature = ob.tempF
+        wind_speed = ob.windSpeedMPH
+    elif target_unit == "METRICWX":
+        temperature = ob.tempC
+        wind_speed = ob.windSpeedMPS
+    else:  # METRIC
+        temperature = ob.tempC
+        wind_speed = ob.windSpeedKPH
+
+    conditions = ProviderConditions(
+        weatherText=ob.weather,
+        weatherCode=ob.weatherPrimaryCoded,
+        precipType=_aeris_descriptor_to_precip_type(ob.weatherPrimaryCoded),
+        cloudCover=ob.sky,
+        isDay=ob.isDay,
+        temperature=temperature,
+        humidity=ob.humidity,
+        windSpeed=wind_speed,
+        windDir=ob.windDirDEG,
+        source=PROVIDER_ID,
+    )
+
+    get_cache().set(
+        cache_key,
+        conditions.model_dump(mode="json"),
+        ttl_seconds=DEFAULT_CONDITIONS_TTL_SECONDS,
+    )
+
+    logger.info(
+        "Aeris current conditions fetched",
+        extra={
+            "provider_id": PROVIDER_ID,
+            "domain": DOMAIN,
+            "lat": round(lat, 4),
+            "lon": round(lon, 4),
+            "target_unit": target_unit,
+        },
+    )
+    return conditions
 
 
 def _reset_http_client_for_tests() -> None:

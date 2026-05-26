@@ -135,6 +135,10 @@ class Observation(BaseModel):
     supplyVoltage: float | None = None
     rxCheckPercent: float | None = None
 
+    # Current conditions text from the blending engine (ADR-0B Phase 0B).
+    # None when conditions engine is "off" or no provider is configured.
+    weatherText: str | None = None
+
     # Operator-custom columns (stock weewx columns NEVER appear here)
     extras: dict[str, Any] = {}
     source: str = "weewx"
@@ -144,6 +148,29 @@ class ArchiveRecord(Observation):
     """ArchiveRecord = Observation + interval (ADR-010 §3.2)."""
 
     interval: int
+
+
+class ProviderConditions(BaseModel):
+    """Current conditions from a forecast provider — internal DTO for blending engine.
+
+    Not an API response shape.  Populated by provider modules and consumed by
+    the conditions blending engine to produce the weatherText field on Observation.
+    extra="ignore" so provider wire fields beyond this set are silently dropped
+    at parse time.
+    """
+
+    model_config = ConfigDict(extra="ignore")
+
+    weatherText: str | None = None
+    weatherCode: str | None = None
+    precipType: str | None = None
+    cloudCover: float | None = None
+    isDay: bool | None = None
+    temperature: float | None = None
+    humidity: float | None = None
+    windSpeed: float | None = None
+    windDir: float | None = None
+    source: str
 
 
 # ---------------------------------------------------------------------------

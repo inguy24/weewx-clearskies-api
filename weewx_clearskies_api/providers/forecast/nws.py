@@ -100,6 +100,7 @@ from weewx_clearskies_api.models.responses import (
     ForecastBundle,
     ForecastDiscussion,
     HourlyForecastPoint,
+    ProviderConditions,
     utc_isoformat,
 )
 from weewx_clearskies_api.providers._common.cache import get_cache
@@ -125,7 +126,9 @@ DOMAIN = "forecast"
 NWS_BASE_URL = "https://api.weather.gov"
 NWS_POINTS_PATH = "/points"
 NWS_PRODUCTS_PATH = "/products"
-DEFAULT_FORECAST_TTL_SECONDS = 1800  # 30 min per ADR-017
+DEFAULT_FORECAST_TTL_SECONDS = 1800   # 30 min per ADR-017
+DEFAULT_CONDITIONS_TTL_SECONDS = 300  # 5 min per brief
+DEFAULT_STATION_LIST_TTL_SECONDS = 3600  # 1 h — station list rarely changes
 
 _API_VERSION = "0.1.0"
 
@@ -252,10 +255,11 @@ class _NwsPointProperties(BaseModel):
     gridId: str
     gridX: int
     gridY: int
-    forecast: str           # URL for 12-hour day/night periods
-    forecastHourly: str     # URL for hourly periods
-    timeZone: str           # IANA TZ for station (e.g. "America/Los_Angeles")
-    radarStation: str | None = None  # not load-bearing
+    forecast: str                         # URL for 12-hour day/night periods
+    forecastHourly: str                   # URL for hourly periods
+    timeZone: str                         # IANA TZ for station (e.g. "America/Los_Angeles")
+    observationStations: str | None = None  # URL for nearest METAR station list
+    radarStation: str | None = None         # not load-bearing
 
 
 class _NwsPointResponse(BaseModel):
@@ -361,6 +365,38 @@ class _NwsAfdProductBody(BaseModel):
     productCode: str | None = None
     productName: str | None = None
     productText: str
+
+
+class _NwsObsValue(BaseModel):
+    """One quantitative value from an NWS observation (SI units, may be null)."""
+
+    model_config = ConfigDict(extra="ignore")
+
+    value: float | None = None
+    unitCode: str | None = None
+
+
+class _NwsObservationProperties(BaseModel):
+    """Properties of a single NWS METAR observation."""
+
+    model_config = ConfigDict(extra="ignore")
+
+    textDescription: str | None = None
+    temperature: _NwsObsValue | None = None
+    windSpeed: _NwsObsValue | None = None
+    windDirection: _NwsObsValue | None = None
+    windGust: _NwsObsValue | None = None
+    barometricPressure: _NwsObsValue | None = None
+    relativeHumidity: _NwsObsValue | None = None
+    icon: str | None = None
+
+
+class _NwsObservationResponse(BaseModel):
+    """NWS /stations/{stationId}/observations/latest GeoJSON Feature envelope."""
+
+    model_config = ConfigDict(extra="ignore")
+
+    properties: _NwsObservationProperties
 
 
 # ---------------------------------------------------------------------------
@@ -1224,6 +1260,301 @@ def fetch(
         },
     )
     return bundle
+
+
+def _build_current_conditions_cache_key(lat: float, lon: float, target_unit: str) -> str:
+    """Build a deterministic cache key for NWS current-conditions data.
+
+    Separate from the forecast bundle key so TTL and invalidation are independent.
+    """
+    payload = json.dumps(
+        {
+            "provider_id": PROVIDER_ID,
+            "endpoint": "current_conditions",
+            "params": {
+                "lat4": str(round(lat, 4)),
+                "lon4": str(round(lon, 4)),
+                "target_unit": target_unit,
+            },
+        },
+        sort_keys=True,
+    )
+    return hashlib.sha256(payload.encode()).hexdigest()
+
+
+def _build_station_list_cache_key(lat: float, lon: float) -> str:
+    """Build a deterministic cache key for the NWS observation-stations list.
+
+    The station list is geometry-based (nearest stations to lat/lon), so target_unit
+    is irrelevant.  TTL = 3600 s (1 h) — station proximity rarely changes.
+    """
+    payload = json.dumps(
+        {
+            "provider_id": PROVIDER_ID,
+            "endpoint": "observation_stations",
+            "params": {
+                "lat4": str(round(lat, 4)),
+                "lon4": str(round(lon, 4)),
+            },
+        },
+        sort_keys=True,
+    )
+    return hashlib.sha256(payload.encode()).hexdigest()
+
+
+def fetch_current_conditions(
+    *,
+    lat: float,
+    lon: float,
+    target_unit: str,
+    user_agent_contact: str | None,
+) -> ProviderConditions | None:
+    """Call NWS observation station endpoints and return ProviderConditions.
+
+    Three outbound calls (on full cache miss):
+      1. Reuse cached /points result to get observationStations URL
+         (or re-fetch /points if not cached — the points call is shared
+          with fetch() so its cache entry may already exist).
+      2. GET <observationStations URL> — list of nearest METAR stations;
+         cached separately with 3600 s TTL.
+      3. GET /stations/{stationId}/observations/latest — current observation;
+         cached with 300 s TTL.
+
+    NWS observations are always SI on the wire:
+      temperature in °C, windSpeed in km/h (wmoUnit:km_h-1 or variant),
+      relativeHumidity in percent.
+
+    Conversion per target_unit:
+      US       → °C → °F (× 9/5 + 32), km/h → mph (÷ 1.60934)
+      METRIC   → °C (no convert), km/h (no convert)
+      METRICWX → °C (no convert), km/h → m/s (÷ 3.6)
+
+    weatherText = properties.textDescription
+    weatherCode = icon shortName extracted via existing _extract_icon_shortname().
+    precipType  = icon shortName → canonical enum via existing
+                  _get_precip_type_from_icon().
+
+    Args:
+        lat: Station latitude.
+        lon: Station longitude.
+        target_unit: Weewx unit system ("US" | "METRIC" | "METRICWX").
+        user_agent_contact: Operator contact string for NWS User-Agent.
+
+    Returns:
+        ProviderConditions on success; None when:
+          - /points lacks observationStations URL
+          - station list is empty
+          - latest observation has no usable data
+
+    Raises:
+        GeographicallyUnsupported: /points returned 404 (non-US lat/lon).
+        QuotaExhausted: NWS returned 429.
+        TransientNetworkError: Network/DNS failure or 5xx after retries.
+        ProviderProtocolError: Wire-shape validation failed.
+    """
+    if not user_agent_contact:
+        _warn_once_missing_contact()
+
+    if target_unit not in {"US", "METRIC", "METRICWX"}:
+        raise ProviderProtocolError(
+            f"unknown target_unit {target_unit!r}; expected US, METRIC, or METRICWX",
+            provider_id=PROVIDER_ID,
+            domain=DOMAIN,
+        )
+
+    conditions_cache_key = _build_current_conditions_cache_key(lat, lon, target_unit)
+    cached = get_cache().get(conditions_cache_key)
+    if cached is not None:
+        logger.debug(
+            "Cache hit for NWS current conditions",
+            extra={"provider_id": PROVIDER_ID, "domain": DOMAIN},
+        )
+        return ProviderConditions.model_validate(cached)
+
+    logger.debug(
+        "Cache miss for NWS current conditions; calling observation API",
+        extra={"provider_id": PROVIDER_ID, "domain": DOMAIN},
+    )
+
+    user_agent = _build_user_agent(user_agent_contact)
+    client = _get_http_client(user_agent)
+
+    lat4 = round(lat, 4)
+    lon4 = round(lon, 4)
+
+    # --- Step 1: get observationStations URL from /points ---
+    # Acquire rate limiter once for this call sequence.
+    _rate_limiter.acquire()
+
+    points_url = f"{NWS_BASE_URL}{NWS_POINTS_PATH}/{lat4},{lon4}"
+    try:
+        points_response = client.get(
+            points_url,
+            headers={"Accept": "application/geo+json"},
+        )
+    except ProviderProtocolError as exc:
+        if exc.status_code == 404:
+            raise GeographicallyUnsupported(
+                f"NWS /points returned 404 for lat={lat4},lon={lon4} — "
+                "location is outside NWS coverage (USA + territories only).",
+                provider_id=PROVIDER_ID,
+                domain=DOMAIN,
+            ) from exc
+        raise
+
+    try:
+        points_wire = _NwsPointResponse.model_validate(points_response.json())
+    except (ValidationError, ValueError) as exc:
+        logger.error(
+            "NWS /points response validation failed (current conditions): %s. "
+            "Response body (first 2000 chars): %.2000s",
+            exc,
+            points_response.text,
+        )
+        raise ProviderProtocolError(
+            f"NWS /points response validation failed: {exc}",
+            provider_id=PROVIDER_ID,
+            domain=DOMAIN,
+        ) from exc
+
+    obs_stations_url = points_wire.properties.observationStations
+    if not obs_stations_url:
+        logger.warning(
+            "NWS /points response missing observationStations URL for lat=%s,lon=%s; "
+            "returning None for current conditions",
+            lat4,
+            lon4,
+            extra={"provider_id": PROVIDER_ID, "domain": DOMAIN},
+        )
+        return None
+
+    # --- Step 2: get observation station list (separately cached) ---
+    station_list_cache_key = _build_station_list_cache_key(lat, lon)
+    station_id: str | None = get_cache().get(station_list_cache_key)
+
+    if station_id is None:
+        _rate_limiter.acquire()
+        stations_response = client.get(
+            obs_stations_url,
+            headers={"Accept": "application/geo+json"},
+        )
+        try:
+            stations_data = stations_response.json()
+            features = stations_data.get("features", [])
+            if not features:
+                logger.warning(
+                    "NWS observation stations list empty for lat=%s,lon=%s; "
+                    "returning None for current conditions",
+                    lat4,
+                    lon4,
+                    extra={"provider_id": PROVIDER_ID, "domain": DOMAIN},
+                )
+                return None
+            # First station is nearest; extract stationIdentifier from properties.
+            first_props = features[0].get("properties", {})
+            station_id = first_props.get("stationIdentifier")
+            if not station_id:
+                logger.warning(
+                    "NWS first observation station has no stationIdentifier; "
+                    "returning None for current conditions",
+                    extra={"provider_id": PROVIDER_ID, "domain": DOMAIN},
+                )
+                return None
+        except (ValueError, KeyError, TypeError) as exc:
+            logger.error(
+                "NWS observation stations response parse failed: %s. "
+                "Response body (first 2000 chars): %.2000s",
+                exc,
+                stations_response.text,
+            )
+            raise ProviderProtocolError(
+                f"NWS observation stations response parse failed: {exc}",
+                provider_id=PROVIDER_ID,
+                domain=DOMAIN,
+            ) from exc
+
+        get_cache().set(
+            station_list_cache_key,
+            station_id,
+            ttl_seconds=DEFAULT_STATION_LIST_TTL_SECONDS,
+        )
+
+    # --- Step 3: GET /stations/{stationId}/observations/latest ---
+    _rate_limiter.acquire()
+    obs_url = f"{NWS_BASE_URL}/stations/{station_id}/observations/latest"
+    obs_response = client.get(
+        obs_url,
+        headers={"Accept": "application/geo+json"},
+    )
+
+    try:
+        obs_wire = _NwsObservationResponse.model_validate(obs_response.json())
+    except (ValidationError, ValueError) as exc:
+        logger.error(
+            "NWS latest observation response validation failed for station %s: %s. "
+            "Response body (first 2000 chars): %.2000s",
+            station_id,
+            exc,
+            obs_response.text,
+        )
+        raise ProviderProtocolError(
+            f"NWS latest observation response validation failed: {exc}",
+            provider_id=PROVIDER_ID,
+            domain=DOMAIN,
+        ) from exc
+
+    props = obs_wire.properties
+
+    # NWS observations are always SI on the wire.
+    # temperature in °C, windSpeed in km/h (wmoUnit:km_h-1), humidity in percent.
+    temp_c: float | None = props.temperature.value if props.temperature else None
+    wind_kph: float | None = props.windSpeed.value if props.windSpeed else None
+    humidity: float | None = props.relativeHumidity.value if props.relativeHumidity else None
+    wind_dir: float | None = props.windDirection.value if props.windDirection else None
+
+    # Unit conversion per target_unit (ADR-019).
+    if target_unit == "US":
+        temperature = (temp_c * 9.0 / 5.0 + 32.0) if temp_c is not None else None
+        wind_speed = (wind_kph / 1.60934) if wind_kph is not None else None
+    elif target_unit == "METRICWX":
+        temperature = temp_c
+        wind_speed = (wind_kph / 3.6) if wind_kph is not None else None
+    else:  # METRIC
+        temperature = temp_c
+        wind_speed = wind_kph
+
+    conditions = ProviderConditions(
+        weatherText=props.textDescription,
+        weatherCode=_extract_icon_shortname(props.icon),
+        precipType=_get_precip_type_from_icon(props.icon),
+        cloudCover=None,   # NWS latest-observation does not supply cloud cover percent
+        isDay=None,        # NWS latest-observation does not supply day/night flag
+        temperature=temperature,
+        humidity=humidity,
+        windSpeed=wind_speed,
+        windDir=wind_dir,
+        source=PROVIDER_ID,
+    )
+
+    get_cache().set(
+        conditions_cache_key,
+        conditions.model_dump(mode="json"),
+        ttl_seconds=DEFAULT_CONDITIONS_TTL_SECONDS,
+    )
+
+    logger.info(
+        "NWS current conditions fetched from station %s",
+        station_id,
+        extra={
+            "provider_id": PROVIDER_ID,
+            "domain": DOMAIN,
+            "lat": lat4,
+            "lon": lon4,
+            "target_unit": target_unit,
+            "station_id": station_id,
+        },
+    )
+    return conditions
 
 
 def _reset_http_client_for_tests() -> None:
