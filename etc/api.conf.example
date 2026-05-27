@@ -148,6 +148,21 @@ path = /var/lib/weewx/weewx.sdb
 #
 # How often to re-warm the /aqi/history endpoint (seconds).  Default 1800 (30 min).
 # aqi_history_interval_seconds = 1800
+#
+# How often to re-warm the /climatology/monthly endpoint (seconds).  Default 21600 (6 h).
+# climatology_interval_seconds = 21600
+#
+# How often to re-warm the /almanac/planets endpoint (seconds).  Default 21600 (6 h).
+# planets_interval_seconds = 21600
+#
+# How often to re-warm the /almanac/eclipses endpoint (seconds).  Default 86400 (24 h).
+# eclipses_interval_seconds = 86400
+#
+# How often to re-warm the /almanac/meteor-showers endpoint (seconds).  Default 86400 (24 h).
+# meteor_showers_interval_seconds = 86400
+#
+# How often to re-warm the /earthquakes/faults endpoint (seconds).  Default 21600 (6 h).
+# faults_interval_seconds = 21600
 
 
 [branding]

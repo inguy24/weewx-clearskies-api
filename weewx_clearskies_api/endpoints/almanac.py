@@ -356,6 +356,38 @@ def get_planets(
     lat, lon, alt = _station_location()
     station_tz = get_station_info().timezone
 
+    # Cache-check-first guard (ADR-045).  The warmer pre-computes today's date
+    # at the station location; use the cached result when the request matches.
+    try:
+        cache_key = f"warmer:almanac:planets:{target_date.isoformat()}"
+        cached = get_cache().get(cache_key)
+        if cached is not None:
+            logger.debug("planets cache hit: date=%s", target_date.isoformat())
+            visibility_raw = cached
+
+            def _to_entries_cached(raw_list: list[dict]) -> list[PlanetEntry]:
+                return [
+                    PlanetEntry(
+                        name=p["name"],
+                        magnitude=p["magnitude"],
+                        rise=p["rise"],
+                        set=p["set"],
+                        constellation=p["constellation"],
+                    )
+                    for p in raw_list
+                ]
+
+            return PlanetResponse(
+                data=PlanetVisibility(
+                    evening=_to_entries_cached(visibility_raw["evening"]),
+                    morning=_to_entries_cached(visibility_raw["morning"]),
+                    allNight=_to_entries_cached(visibility_raw["allNight"]),
+                ),
+                generatedAt=utc_isoformat(datetime.now(tz=UTC)),
+            )
+    except Exception:
+        logger.debug("planets cache miss or error: date=%s", target_date.isoformat(), exc_info=True)
+
     visibility_raw = almanac_svc.compute_planets(
         target_date, lat, lon, alt, station_tz=station_tz
     )
@@ -393,6 +425,24 @@ def get_eclipses(
     """
     year = params.year if params.year is not None else _current_year_in_station_tz()
 
+    # Cache-check-first guard (ADR-045).  The warmer pre-computes the current
+    # year; use the cached result when the request matches.
+    try:
+        cache_key = f"warmer:almanac:eclipses:{year}"
+        cached = get_cache().get(cache_key)
+        if cached is not None:
+            logger.debug("eclipses cache hit: year=%d", year)
+            eclipses = [
+                LunarEclipseEntry(date=e["date"], type=e["type"])
+                for e in cached
+            ]
+            return EclipseResponse(
+                data=LunarEclipseList(year=year, eclipses=eclipses),
+                generatedAt=utc_isoformat(datetime.now(tz=UTC)),
+            )
+    except Exception:
+        logger.debug("eclipses cache miss or error: year=%d", year, exc_info=True)
+
     eclipses_raw = almanac_svc.compute_lunar_eclipses(year)
     eclipses = [
         LunarEclipseEntry(date=e["date"], type=e["type"])
@@ -417,6 +467,32 @@ def get_meteor_showers(
     year = params.year if params.year is not None else _current_year_in_station_tz()
     lat, lon, alt = _station_location()
     station_tz = get_station_info().timezone
+
+    # Cache-check-first guard (ADR-045).  The warmer pre-computes the current
+    # year at the station location; use the cached result when available.
+    try:
+        cache_key = f"warmer:almanac:meteor-showers:{year}"
+        cached = get_cache().get(cache_key)
+        if cached is not None:
+            logger.debug("meteor-showers cache hit: year=%d", year)
+            showers = [
+                MeteorShowerEntry(
+                    name=s["name"],
+                    peakDate=s["peakDate"],
+                    zhr=s["zhr"],
+                    radiantAltitudeDeg=s["radiantAltitudeDeg"],
+                    moonIlluminationPercent=s["moonIlluminationPercent"],
+                    viewingConditions=s["viewingConditions"],
+                    parentBody=s["parentBody"],
+                )
+                for s in cached
+            ]
+            return MeteorShowerResponse(
+                data=MeteorShowerList(year=year, showers=showers),
+                generatedAt=utc_isoformat(datetime.now(tz=UTC)),
+            )
+    except Exception:
+        logger.debug("meteor-showers cache miss or error: year=%d", year, exc_info=True)
 
     showers_raw = almanac_svc.compute_meteor_showers(
         year, lat, lon, alt, station_tz=station_tz

@@ -54,6 +54,7 @@ from weewx_clearskies_api.models.responses import (
     EarthquakeRecord,
     utc_isoformat,
 )
+from weewx_clearskies_api.providers._common.cache import get_cache
 from weewx_clearskies_api.providers._common.capability import get_provider_registry
 from weewx_clearskies_api.services.station import get_station_info
 
@@ -364,6 +365,20 @@ def get_faults() -> dict:
             "this should not happen after successful startup"
         )
         raise HTTPException(status_code=503, detail="Service starting")
+
+    # Cache-check-first guard (ADR-045).  The warmer pre-computes faults for
+    # the station location and configured radius on a 6-hour interval.
+    try:
+        cached = get_cache().get("warmer:earthquakes:faults")
+        if cached is not None:
+            logger.debug("faults cache hit")
+            return {
+                "data": cached,
+                "attribution": "Active faults: GEM Global Active Faults Database, CC-BY-SA 4.0",
+                "generatedAt": now_str,
+            }
+    except Exception:
+        logger.debug("faults cache miss or error", exc_info=True)
 
     data = get_faults_within_radius(station.latitude, station.longitude, _default_radius_km)
 

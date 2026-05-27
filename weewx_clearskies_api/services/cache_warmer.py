@@ -9,11 +9,21 @@ Warmed endpoints:
   - GET /records?period=ytd (unfiltered only)
   - GET /almanac/sun-times (current year, station location)
   - GET /almanac/moon-phases (current year, full-year, station location)
+  - GET /climatology/monthly
+  - GET /almanac/planets (today's date, station location)
+  - GET /almanac/eclipses (current year)
+  - GET /almanac/meteor-showers (current year, station location)
+  - GET /earthquakes/faults (station location, configured radius)
 
 Cache key format:
-  warmer:records:<period>          e.g. warmer:records:all-time
-  warmer:almanac:sun-times:<year>  e.g. warmer:almanac:sun-times:2026
+  warmer:records:<period>                e.g. warmer:records:all-time
+  warmer:almanac:sun-times:<year>        e.g. warmer:almanac:sun-times:2026
   warmer:almanac:moon-phases:<year>
+  warmer:climatology:monthly
+  warmer:almanac:planets:<date>          e.g. warmer:almanac:planets:2026-05-27
+  warmer:almanac:eclipses:<year>         e.g. warmer:almanac:eclipses:2026
+  warmer:almanac:meteor-showers:<year>   e.g. warmer:almanac:meteor-showers:2026
+  warmer:earthquakes:faults
 
 Cached values are plain dicts (JSON-safe) so both MemoryCache and RedisCache
 backends work correctly.  RecordsBundle.model_dump() serialises the Pydantic
@@ -98,6 +108,11 @@ class BackgroundCacheWarmer:
         logger.info("Cache warmer: initial warm starting")
         self._warm_records()
         self._warm_almanac()
+        self._warm_climatology()
+        self._warm_planets()
+        self._warm_eclipses()
+        self._warm_meteor_showers()
+        self._warm_faults()
         logger.info("Cache warmer: initial warm complete")
 
     def start(self) -> None:
@@ -118,6 +133,11 @@ class BackgroundCacheWarmer:
         """Main loop: wake every _SLEEP_TICK_SECONDS, run overdue functions."""
         last_records: float = _NEVER
         last_almanac: float = _NEVER
+        last_climatology: float = _NEVER
+        last_planets: float = _NEVER
+        last_eclipses: float = _NEVER
+        last_meteor_showers: float = _NEVER
+        last_faults: float = _NEVER
 
         while not self._stop_event.is_set():
             now = time.monotonic()
@@ -129,6 +149,26 @@ class BackgroundCacheWarmer:
             if last_almanac == _NEVER or (now - last_almanac) >= self._settings.almanac_interval_seconds:
                 self._warm_almanac()
                 last_almanac = time.monotonic()
+
+            if last_climatology == _NEVER or (now - last_climatology) >= self._settings.climatology_interval_seconds:
+                self._warm_climatology()
+                last_climatology = time.monotonic()
+
+            if last_planets == _NEVER or (now - last_planets) >= self._settings.planets_interval_seconds:
+                self._warm_planets()
+                last_planets = time.monotonic()
+
+            if last_eclipses == _NEVER or (now - last_eclipses) >= self._settings.eclipses_interval_seconds:
+                self._warm_eclipses()
+                last_eclipses = time.monotonic()
+
+            if last_meteor_showers == _NEVER or (now - last_meteor_showers) >= self._settings.meteor_showers_interval_seconds:
+                self._warm_meteor_showers()
+                last_meteor_showers = time.monotonic()
+
+            if last_faults == _NEVER or (now - last_faults) >= self._settings.faults_interval_seconds:
+                self._warm_faults()
+                last_faults = time.monotonic()
 
             # Sleep in small ticks so stop() is responsive.
             self._stop_event.wait(timeout=_SLEEP_TICK_SECONDS)
@@ -193,3 +233,102 @@ class BackgroundCacheWarmer:
             logger.info("Cache warmer: almanac refreshed for year %d", year)
         except Exception:
             logger.warning("Cache warmer: almanac warm failed", exc_info=True)
+
+    def _warm_climatology(self) -> None:
+        """Warm GET /climatology/monthly."""
+        try:
+            from weewx_clearskies_api.services.climatology import get_monthly_climatology
+
+            cache = get_cache()
+            with Session(self._engine) as db:
+                clim_data = get_monthly_climatology(db, self._registry)
+            cache.set(
+                "warmer:climatology:monthly",
+                clim_data,
+                self._settings.climatology_interval_seconds,
+            )
+            logger.info("Cache warmer: climatology refreshed")
+        except Exception:
+            logger.warning("Cache warmer: climatology warm failed", exc_info=True)
+
+    def _warm_planets(self) -> None:
+        """Warm GET /almanac/planets for today's date at the station location."""
+        try:
+            from weewx_clearskies_api.services.almanac import compute_planets
+
+            cache = get_cache()
+            today = datetime.now(timezone.utc).date()
+            lat = self._station["lat"]
+            lon = self._station["lon"]
+            alt_m = self._station["alt_m"]
+            station_tz = self._station["station_tz"]
+
+            planets_data = compute_planets(today, lat, lon, alt_m, station_tz)
+            cache.set(
+                f"warmer:almanac:planets:{today.isoformat()}",
+                planets_data,
+                self._settings.planets_interval_seconds,
+            )
+            logger.info("Cache warmer: planets refreshed for %s", today.isoformat())
+        except Exception:
+            logger.warning("Cache warmer: planets warm failed", exc_info=True)
+
+    def _warm_eclipses(self) -> None:
+        """Warm GET /almanac/eclipses for the current year."""
+        try:
+            from weewx_clearskies_api.services.almanac import compute_lunar_eclipses
+
+            cache = get_cache()
+            year = datetime.now(timezone.utc).year
+
+            eclipses_data = compute_lunar_eclipses(year)
+            cache.set(
+                f"warmer:almanac:eclipses:{year}",
+                eclipses_data,
+                self._settings.eclipses_interval_seconds,
+            )
+            logger.info("Cache warmer: eclipses refreshed for year %d", year)
+        except Exception:
+            logger.warning("Cache warmer: eclipses warm failed", exc_info=True)
+
+    def _warm_meteor_showers(self) -> None:
+        """Warm GET /almanac/meteor-showers for the current year at the station location."""
+        try:
+            from weewx_clearskies_api.services.almanac import compute_meteor_showers
+
+            cache = get_cache()
+            year = datetime.now(timezone.utc).year
+            lat = self._station["lat"]
+            lon = self._station["lon"]
+            alt_m = self._station["alt_m"]
+            station_tz = self._station["station_tz"]
+
+            showers_data = compute_meteor_showers(year, lat, lon, alt_m, station_tz)
+            cache.set(
+                f"warmer:almanac:meteor-showers:{year}",
+                showers_data,
+                self._settings.meteor_showers_interval_seconds,
+            )
+            logger.info("Cache warmer: meteor showers refreshed for year %d", year)
+        except Exception:
+            logger.warning("Cache warmer: meteor showers warm failed", exc_info=True)
+
+    def _warm_faults(self) -> None:
+        """Warm GET /earthquakes/faults using the station location and configured radius."""
+        try:
+            from weewx_clearskies_api.services.faults import get_faults_within_radius
+            from weewx_clearskies_api.endpoints.earthquakes import _default_radius_km
+
+            cache = get_cache()
+            lat = self._station["lat"]
+            lon = self._station["lon"]
+
+            faults_data = get_faults_within_radius(lat, lon, _default_radius_km)
+            cache.set(
+                "warmer:earthquakes:faults",
+                faults_data,
+                self._settings.faults_interval_seconds,
+            )
+            logger.info("Cache warmer: faults refreshed (radius %.1f km)", _default_radius_km)
+        except Exception:
+            logger.warning("Cache warmer: faults warm failed", exc_info=True)

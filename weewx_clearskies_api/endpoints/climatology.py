@@ -25,6 +25,7 @@ from sqlalchemy.orm import Session
 
 from weewx_clearskies_api.db.registry import get_registry
 from weewx_clearskies_api.db.session import get_db_session
+from weewx_clearskies_api.providers._common.cache import get_cache
 from weewx_clearskies_api.services.climatology import get_monthly_climatology
 
 logger = logging.getLogger(__name__)
@@ -55,6 +56,20 @@ def get_monthly_climatology_endpoint(
     Fields whose archive column is absent from the ColumnRegistry are
     omitted from the response (self-hide rule).
     """
+    # Cache-check-first guard (ADR-045).  The warmer pre-computes the monthly
+    # climatology on a 6-hour interval; use the cached result when available.
+    try:
+        cached = get_cache().get("warmer:climatology:monthly")
+        if cached is not None:
+            logger.debug("climatology cache hit")
+            return {
+                "data": cached,
+                "source": "weewx",
+                "generatedAt": _now_utc_z(),
+            }
+    except Exception:
+        logger.debug("climatology cache miss or error", exc_info=True)
+
     registry = get_registry()
 
     clim_data = get_monthly_climatology(db=db, registry=registry)
